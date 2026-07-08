@@ -83,11 +83,11 @@ class WelcomeMuteUsers(BASE):
         self.human_check = human_check
 
 
-Welcome.__table__.create(checkfirst=True)
-WelcomeButtons.__table__.create(checkfirst=True)
-GoodbyeButtons.__table__.create(checkfirst=True)
-WelcomeMute.__table__.create(checkfirst=True)
-WelcomeMuteUsers.__table__.create(checkfirst=True)
+Welcome.__table__.create(SESSION.bind, checkfirst=True)
+WelcomeButtons.__table__.create(SESSION.bind, checkfirst=True)
+GoodbyeButtons.__table__.create(SESSION.bind, checkfirst=True)
+WelcomeMute.__table__.create(SESSION.bind, checkfirst=True)
+WelcomeMuteUsers.__table__.create(SESSION.bind, checkfirst=True)
 
 INSERTION_LOCK = threading.RLock()
 WELC_BTN_LOCK = threading.RLock()

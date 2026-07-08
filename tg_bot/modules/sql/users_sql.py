@@ -57,9 +57,9 @@ class ChatMembers(BASE):
                                                             self.chat.chat_name, self.chat.chat_id)
 
 
-Users.__table__.create(checkfirst=True)
-Chats.__table__.create(checkfirst=True)
-ChatMembers.__table__.create(checkfirst=True)
+Users.__table__.create(SESSION.bind, checkfirst=True)
+Chats.__table__.create(SESSION.bind, checkfirst=True)
+ChatMembers.__table__.create(SESSION.bind, checkfirst=True)
 
 INSERTION_LOCK = threading.RLock()
 
@@ -112,7 +112,7 @@ def get_userid_by_name(username):
 
 def get_name_by_userid(user_id):
     try:
-        return SESSION.query(Users).get(Users.user_id == int(user_id)).first()
+        return SESSION.query(Users).get(int(user_id))
     finally:
         SESSION.close()
 
@@ -188,7 +188,7 @@ def del_user(user_id):
             SESSION.commit()
             return True
 
-        ChatMembers.query.filter(ChatMembers.user == user_id).delete()
+        SESSION.query(ChatMembers).filter(ChatMembers.user == user_id).delete()
         SESSION.commit()
         SESSION.close()
     return False

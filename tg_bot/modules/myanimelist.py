@@ -23,7 +23,7 @@ def refresh_token(msg: Message, error: APIException) -> None:
         new_refresh_token = client.refresh_token
         MSG_TEXT = (f"Your MAL access token has expired.\n*New Access Token*: `{new_access_token}`\n"
             f"*New Refresh Token*: `{new_refresh_token}`")
-        bot.send_message(OWNER_ID, MSG_TEXT, parse_mode="MARKDOWN")
+        dispatcher.bot.send_message(OWNER_ID, MSG_TEXT, parse_mode="MARKDOWN")
     else:
         msg.reply_text(f"An error occurred:\n`{error}`", parse_mode="MARKDOWN")
 

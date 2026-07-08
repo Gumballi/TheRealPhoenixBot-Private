@@ -49,9 +49,9 @@ class ConnectionHistory(BASE):
         return "<connection user {} history {}>".format(self.user_id, self.chat_id)
 
 
-ChatAccessConnectionSettings.__table__.create(checkfirst=True)
-Connection.__table__.create(checkfirst=True)
-ConnectionHistory.__table__.create(checkfirst=True)
+ChatAccessConnectionSettings.__table__.create(SESSION.bind, checkfirst=True)
+Connection.__table__.create(SESSION.bind, checkfirst=True)
+ConnectionHistory.__table__.create(SESSION.bind, checkfirst=True)
 
 CHAT_ACCESS_LOCK = threading.RLock()
 CONNECTION_INSERTION_LOCK = threading.RLock()
@@ -101,7 +101,7 @@ def get_connected_chat(user_id):
 
 def curr_connection(chat_id):
     try:
-        return SESSION.query(Connection).get((str(chat_id)))
+        return SESSION.query(Connection).filter(Connection.chat_id == str(chat_id)).first()
     finally:
         SESSION.close()
 

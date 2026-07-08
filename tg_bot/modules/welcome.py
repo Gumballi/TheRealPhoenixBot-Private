@@ -76,7 +76,7 @@ def send(update, message, keyboard, backup_message):
                                                                       "\nNote: An error occured when sending the "
                                                                       "custom message. Please update."),
                                                       parse_mode=ParseMode.HTML)
-            LOGGER.exception()
+            LOGGER.exception("An error occurred when sending the custom message.")
 
     return msg
 

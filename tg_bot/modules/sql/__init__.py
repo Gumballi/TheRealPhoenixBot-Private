@@ -6,10 +6,14 @@ from tg_bot import DB_URI
 
 
 def start() -> scoped_session:
-    engine = create_engine(DB_URI, client_encoding="utf8")
-    BASE.metadata.bind = engine
+    if DB_URI.startswith("sqlite"):
+        engine = create_engine(DB_URI)
+    else:
+        engine = create_engine(DB_URI, client_encoding="utf8")
     BASE.metadata.create_all(engine)
-    return scoped_session(sessionmaker(bind=engine, autoflush=False))
+    session = scoped_session(sessionmaker(bind=engine, autoflush=False))
+    session.bind = engine
+    return session
 
 
 BASE = declarative_base()
