@@ -39,31 +39,41 @@ def check_afk_status(user_id):
 
 def set_afk(user_id, reason=""):
     with INSERTION_LOCK:
-        curr = SESSION.query(AFK).get(user_id)
-        if not curr:
-            curr = AFK(user_id, reason, True)
-        else:
-            curr.is_afk = True
-            curr.reason = reason
+        try:
+            curr = SESSION.query(AFK).get(user_id)
+            if not curr:
+                curr = AFK(user_id, reason, True)
+            else:
+                curr.is_afk = True
+                curr.reason = reason
 
-        AFK_USERS[user_id] = reason
+            AFK_USERS[user_id] = reason
 
-        SESSION.add(curr)
-        SESSION.commit()
+            SESSION.add(curr)
+            SESSION.commit()
+        except Exception as e:
+            SESSION.rollback()
+            print(f"[DB-ERROR] Failed to set AFK status: {e}")
+            raise e
 
 
 def rm_afk(user_id):
     with INSERTION_LOCK:
-        curr = SESSION.query(AFK).get(user_id)
-        if curr:
-            if user_id in AFK_USERS:  # sanity check
-                del AFK_USERS[user_id]
+        try:
+            curr = SESSION.query(AFK).get(user_id)
+            if curr:
+                if user_id in AFK_USERS:  # sanity check
+                    del AFK_USERS[user_id]
 
-            SESSION.delete(curr)
-            SESSION.commit()
-            return True
-
-        SESSION.close()
+                SESSION.delete(curr)
+                SESSION.commit()
+                return True
+        except Exception as e:
+            SESSION.rollback()
+            print(f"[DB-ERROR] Failed to remove AFK status: {e}")
+            raise e
+        finally:
+            SESSION.close()
         return False
 
 
@@ -72,6 +82,9 @@ def __load_afk_users():
     try:
         all_afk = SESSION.query(AFK).all()
         AFK_USERS = {user.user_id: user.reason for user in all_afk if user.is_afk}
+    except Exception as e:
+        SESSION.rollback()
+        print(f"[DB-ERROR] Failed to initial load AFK users: {e}")
     finally:
         SESSION.close()
 
