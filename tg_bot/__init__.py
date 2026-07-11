@@ -3,6 +3,8 @@ import os
 import sys
 import collections
 import collections.abc
+
+# Maintain legacy collection mappings for backward-compatible dependencies
 collections.Mapping = collections.abc.Mapping
 collections.MutableMapping = collections.abc.MutableMapping
 
@@ -31,9 +33,9 @@ logging.basicConfig(handlers=[InterceptHandler()], level=logging.INFO)
 # enable logging
 LOGGER = logging.getLogger(__name__)
 
-# if version < 3.6, stop bot.
-if sys.version_info[0] < 3 or sys.version_info[1] < 6:
-    LOGGER.error("You MUST have a python version of at least 3.6! Multiple features depend on this. Bot quitting.")
+# Verify Python runtime compatibility
+if sys.version_info[0] < 3 or sys.version_info[1] < 7:
+    LOGGER.error("You MUST have a python version of at least 3.7! Modern async features depend on this. Bot quitting.")
     quit(1)
 
 ENV = bool(os.environ.get('ENV', False))
@@ -62,7 +64,6 @@ if ENV:
         WHITELIST_USERS = {
             int(x) for x in os.environ.get("WHITELIST_USERS", "").split()
         }
-
     except ValueError:
         raise Exception("Your whitelisted users list does not contain valid integers.")
 
@@ -152,27 +153,25 @@ else:
     try:
         BL_CHATS = {int(x) for x in Config.BL_CHATS or []}
     except ValueError:
-        raise Exception ("Your blacklisted chats list does not contain valid integers.")
+        raise Exception("Your blacklisted chats list does not contain valid integers.")
 
-
+# Establish administrative identities
 SUDO_USERS.add(OWNER_ID)
 DEV_USERS.add(OWNER_ID)
-
-updater = tg.Updater(TOKEN, workers=WORKERS)
-
-dispatcher = updater.dispatcher
 
 SUDO_USERS = list(SUDO_USERS)
 WHITELIST_USERS = list(WHITELIST_USERS)
 SUPPORT_USERS = list(SUPPORT_USERS)
 
-# Load at end tsure all prev variables have been set
+# Modern Application Initialization (PTB v20+)
+updater = tg.Application.builder().token(TOKEN).build()
+dispatcher = updater
+
+# Load handlers at the end to ensure all core settings exist
 from tg_bot.modules.helper_funcs.handlers import CustomCommandHandler, CustomRegexHandler, CustomMessageHandler
 
-# make sure the regex handler can take extra kwargs
+# Inject project-specific custom handler behavior overrides
 tg.RegexHandler = CustomRegexHandler
-
-# Exempt blacklisted users from MessageHandler
 tg.MessageHandler = CustomMessageHandler
 
 if ALLOW_EXCL:
