@@ -1,20 +1,13 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, scoped_session
+import tg_bot
 
-from tg_bot import DB_URI
+# Standardize the database URI fallback across different forks
+DB_URI = getattr(tg_bot, 'SQLALCHEMY_DATABASE_URI', getattr(tg_bot, 'DB_URI', None))
 
-
-def start() -> scoped_session:
-    if DB_URI.startswith("sqlite"):
-        engine = create_engine(DB_URI)
-    else:
-        engine = create_engine(DB_URI, client_encoding="utf8")
-    BASE.metadata.create_all(engine)
-    session = scoped_session(sessionmaker(bind=engine, autoflush=False))
-    session.bind = engine
-    return session
-
-
+engine = create_engine(DB_URI, client_encoding="utf8")
 BASE = declarative_base()
-SESSION = start()
+BASE.metadata.bind = engine
+
+SESSION = scoped_session(sessionmaker(bind=engine, autoflush=False))

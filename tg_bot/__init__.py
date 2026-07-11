@@ -1,6 +1,10 @@
 import logging
 import os
 import sys
+import collections
+import collections.abc
+collections.Mapping = collections.abc.Mapping
+collections.MutableMapping = collections.abc.MutableMapping
 
 import telegram.ext as tg
 from loguru import logger

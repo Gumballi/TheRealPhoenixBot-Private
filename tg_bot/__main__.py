@@ -1,3 +1,12 @@
+import collections
+import collections.abc
+
+# Patch older libraries expecting Mapping in the top-level collections module
+collections.Mapping = collections.abc.Mapping
+collections.MutableMapping = collections.abc.MutableMapping
+collections.Sequence = collections.abc.Sequence
+collections.MutableSequence = collections.abc.MutableSequence
+
 import datetime
 import importlib
 import re
