@@ -5,7 +5,7 @@ from telegram.ext import CallbackContext, CallbackQueryHandler, InlineQueryHandl
 
 from tg_bot import dispatcher
 
-# Internal storage for live secrets
+# Internal dictionary database for active secrets
 SECRET_DB = {}
 
 def inline_secret_handler(update: Update, context: CallbackContext):
@@ -15,100 +15,109 @@ def inline_secret_handler(update: Update, context: CallbackContext):
     if not query_text:
         return
 
-    # Regex looks for: text context up until an '@' symbol at the end
-    # Match pattern example: "My dark secret @target_username"
+    # Regex looks for: <any secret text> followed by space and @username at the end
     match = re.search(r'(.*?)\s+@([A-Za-z0-9_]{5,32})$', query_text)
     
     if not match:
-        # Show a helpful helper hint to the user while they are actively typing out their query
+        # Show a helpful live hint option while the user is actively typing
         results = [
             InlineQueryResultArticle(
                 id="hint",
-                title="Format Guide",
-                description="Type: <secret text> @username",
+                title="Secret Message Format Guide",
+                description="Type: your message here @username",
                 input_message_content=InputTextMessageContent(
-                    "Standard Usage: Type `@botname your text @target` directly inside the input line."
+                    "To send a secret, type: @botusername <secret text> @target_username"
                 )
             )
         ]
-        query_obj.answer(results, cache_time=1)
+        context.bot.answer_inline_query(query_obj.id, results, cache_time=1)
         return
 
     secret_payload = match.group(1).strip()
     target_username = match.group(2).strip().lower()
     sender = query_obj.from_user
 
-    # Generate reference tracking identity keys
+    # Create reference key maps
     secret_id = str(uuid.uuid4())[:8]
     SECRET_DB[secret_id] = {
         "text": secret_payload,
         "target_username": target_username,
-        "sender_id": sender.id,
-        "sender_name": sender.first_name
+        "sender_id": sender.id
     }
 
-    # Prepare user interface buttons
+    # Build the interactive panel buttons
     keyboard = [
         [
             InlineKeyboardButton(
                 text="👁️ Reveal Secret", 
-                callback_data=f"secret_{secret_id}"
+                callback_data="secret_{}".format(secret_id)
             )
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Frame output representation layout
+    # Escape potential formatting issues for markdown safety
+    safe_sender = sender.first_name.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[')
+    safe_target = target_username.replace('_', '\\_')
+
     display_text = (
-        f"*A Secret Message Has Arrived!*\n\n"
-        f"**From:** {sender.mention_markdown_v2()}\n"
-        f"**For:** @{target_username.replace('_', '\\_')}\n\n"
-        f"_Only the matching target username can decrypt this capsule._"
-    )
+        "🔒 *A Secret Message Has Arrived!*\n\n"
+        "👤 *From:* {}\n"
+        "🎯 *For:* @{}\n\n"
+        "_Only the designated recipient can open this text frame._"
+    ).format(safe_sender, safe_target)
 
     results = [
         InlineQueryResultArticle(
             id=secret_id,
-            title=f"Send Secret to @{target_username}",
-            description=f"Message: {secret_payload[:30]}...",
+            title="Send secret capsule to @{}".format(target_username),
+            description="Message snippet: {}...".format(secret_payload[:25]),
             input_message_content=InputTextMessageContent(
-                text=display_text, 
-                parse_mode="MarkdownV2"
+                message_text=display_text, 
+                parse_mode="Markdown"
             ),
             reply_markup=reply_markup
         )
     ]
 
-    query_obj.answer(results, cache_time=0, is_personal=True)
+    context.bot.answer_inline_query(query_obj.id, results, cache_time=0, is_personal=True)
 
 
 def read_inline_secret(update: Update, context: CallbackContext):
     query = update.callback_query
     current_user = query.from_user
     
-    # Extract structural identifier token maps
+    # Extract structural identity fields from target callback_data
     secret_id = query.data.split("_")[1]
 
     if secret_id not in SECRET_DB:
-        query.answer(text="Error: This secret message has expired or no longer exists.", show_alert=True)
-        return
-
-    data = SECRET_DB[secret_id]
-    
-    current_username = (current_user.username or "").lower()
-
-    # Double validation check (Matches both direct unique Telegram numeric ID OR raw textual target string handle matching)
-    if current_username != data["target_username"]:
-        query.answer(
-            text=f"Access Denied! This secret envelope belongs exclusively to @{data['target_username']}.", 
+        context.bot.answer_callback_query(
+            callback_query_id=query.id,
+            text="⚠️ Error: This secret envelope has expired or no longer exists.", 
             show_alert=True
         )
         return
 
-    # Deliver target packet text cleanly via interactive alert notification container panels
-    query.answer(text=f"Decrypted Message:\n\n{data['text']}", show_alert=True)
+    data = SECRET_DB[secret_id]
+    current_username = (current_user.username or "").lower()
+
+    # Permission check validation
+    if current_username != data["target_username"]:
+        context.bot.answer_callback_query(
+            callback_query_id=query.id,
+            text="🚫 Access Denied! This secret capsule is strictly for @{}.".format(data['target_username']), 
+            show_alert=True
+        )
+        return
+
+    # Clear and push content out to target popups
+    context.bot.answer_callback_query(
+        callback_query_id=query.id,
+        text="🔑 Decrypted Secret Message:\n\n{}".format(data['text']), 
+        show_alert=True
+    )
 
 
-# Connect inline interaction mechanics to framework architecture distribution layers
-dispatcher.add_handler(InlineQueryHandler(inline_secret_handler, run_async=True))
-dispatcher.add_handler(CallbackQueryHandler(read_inline_secret, pattern=r"^secret_", run_async=True))
+# Attach handlers to the central dispatcher infrastructure layout
+dispatcher.add_handler(InlineQueryHandler(inline_secret_handler))
+dispatcher.add_handler(CallbackQueryHandler(read_inline_secret, pattern=r"^secret_"))
