@@ -8,6 +8,11 @@ from tg_bot import dispatcher
 # Internal dictionary database for active secrets
 SECRET_DB = {}
 
+def escape_markdown_v2(text):
+    """Escapes MarkdownV2 special characters to prevent silent formatting crashes."""
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(r'([%s])' % re.escape(escape_chars), r'\\\1', str(text))
+
 def inline_secret_handler(update: Update, context: CallbackContext):
     query_obj = update.inline_query
     query_text = query_obj.query.strip()
@@ -19,7 +24,6 @@ def inline_secret_handler(update: Update, context: CallbackContext):
     match = re.search(r'(.*?)\s+@([A-Za-z0-9_]{5,32})$', query_text)
     
     if not match:
-        # Show a helpful live hint option while the user is actively typing
         results = [
             InlineQueryResultArticle(
                 id="hint",
@@ -37,7 +41,7 @@ def inline_secret_handler(update: Update, context: CallbackContext):
     target_username = match.group(2).strip().lower()
     sender = query_obj.from_user
 
-    # Create reference key maps
+    # Create reference tracking keys
     secret_id = str(uuid.uuid4())[:8]
     SECRET_DB[secret_id] = {
         "text": secret_payload,
@@ -56,16 +60,16 @@ def inline_secret_handler(update: Update, context: CallbackContext):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Escape potential formatting issues for markdown safety
-    safe_sender = sender.first_name.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[')
-    safe_target = target_username.replace('_', '\\_')
+    # Safely escape usernames and display strings for MarkdownV2 compliance
+    safe_sender_name = escape_markdown_v2(sender.first_name)
+    safe_target_user = escape_markdown_v2(target_username)
 
     display_text = (
-        "🔒 *A Secret Message Has Arrived!*\n\n"
-        "👤 *From:* {}\n"
+        "🔒 *A Secret Message Has Arrived\\!*\n\n"
+        "👤 *From:* [{}](tg://user?id={})\n"
         "🎯 *For:* @{}\n\n"
-        "_Only the designated recipient can open this text frame._"
-    ).format(safe_sender, safe_target)
+        "_Only the designated recipient can open this text frame\\._"
+    ).format(safe_sender_name, sender.id, safe_target_user)
 
     results = [
         InlineQueryResultArticle(
@@ -74,7 +78,7 @@ def inline_secret_handler(update: Update, context: CallbackContext):
             description="Message snippet: {}...".format(secret_payload[:25]),
             input_message_content=InputTextMessageContent(
                 message_text=display_text, 
-                parse_mode="Markdown"
+                parse_mode="MarkdownV2"
             ),
             reply_markup=reply_markup
         )
@@ -87,7 +91,6 @@ def read_inline_secret(update: Update, context: CallbackContext):
     query = update.callback_query
     current_user = query.from_user
     
-    # Extract structural identity fields from target callback_data
     secret_id = query.data.split("_")[1]
 
     if secret_id not in SECRET_DB:
@@ -110,7 +113,7 @@ def read_inline_secret(update: Update, context: CallbackContext):
         )
         return
 
-    # Clear and push content out to target popups
+    # Deliver content securely via popup
     context.bot.answer_callback_query(
         callback_query_id=query.id,
         text="🔑 Decrypted Secret Message:\n\n{}".format(data['text']), 
@@ -118,6 +121,6 @@ def read_inline_secret(update: Update, context: CallbackContext):
     )
 
 
-# Attach handlers to the central dispatcher infrastructure layout
+# Attach handlers to the central dispatcher
 dispatcher.add_handler(InlineQueryHandler(inline_secret_handler))
 dispatcher.add_handler(CallbackQueryHandler(read_inline_secret, pattern=r"^secret_"))
