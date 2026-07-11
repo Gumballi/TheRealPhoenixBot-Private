@@ -428,7 +428,7 @@ def migrate_chats(bot: Bot, update: Update):
 
 def run_dummy_server():
     # Render assigns an absolute port dynamically in the web system environment
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
     LOGGER.info(f"Dummy background server listening on port {port}")
     server.serve_forever()
