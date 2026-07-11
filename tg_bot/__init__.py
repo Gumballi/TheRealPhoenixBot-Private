@@ -163,9 +163,9 @@ SUDO_USERS = list(SUDO_USERS)
 WHITELIST_USERS = list(WHITELIST_USERS)
 SUPPORT_USERS = list(SUPPORT_USERS)
 
-# Modern Application Initialization (PTB v20+)
-updater = tg.Application.builder().token(TOKEN).build()
-dispatcher = updater
+# Legacy Application Initialization (PTB v13 compatible)
+updater = tg.Updater(TOKEN, workers=WORKERS, use_context=True)
+dispatcher = updater.dispatcher
 
 # Load handlers at the end to ensure all core settings exist
 from tg_bot.modules.helper_funcs.handlers import CustomCommandHandler, CustomRegexHandler, CustomMessageHandler
