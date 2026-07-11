@@ -13,7 +13,7 @@ def escape_markdown_v2(text):
     escape_chars = r'_*[]()~`>#+-=|{}.!'
     return re.sub(r'([%s])' % re.escape(escape_chars), r'\\\1', str(text))
 
-def inline_secret_handler(update: Update, context: CallbackContext):
+def inline_secret_handler(update, context):
     query_obj = update.inline_query
     query_text = query_obj.query.strip()
 
@@ -21,14 +21,12 @@ def inline_secret_handler(update: Update, context: CallbackContext):
         return
 
     # Extract all occurrences of @username from the query text
-    # Matches standard Telegram usernames: alphanumeric and underscores, 5-32 chars
     target_usernames = set(re.findall(r'@([A-Za-z0-9_]{5,32})', query_text))
     
     # Strip the @usernames out of the query to isolate the clean secret message content
     secret_payload = re.sub(r'@[A-Za-z0-9_]{5,32}', '', query_text).strip()
 
     if not target_usernames or not secret_payload:
-        # Provide an active template hint if they haven't typed text or tagged anyone yet
         results = [
             InlineQueryResultArticle(
                 id="hint",
@@ -39,14 +37,12 @@ def inline_secret_handler(update: Update, context: CallbackContext):
                 )
             )
         ]
-        context.bot.answer_inline_query(query_obj.id, results, cache_time=1)
+        query_obj.answer(results, cache_time=1)
         return
 
-    # Normalize extracted target strings to lowercase for strict validation comparison matches
     target_usernames = {user.lower() for user in target_usernames}
     sender = query_obj.from_user
 
-    # Generate tracking keys
     secret_id = str(uuid.uuid4())[:8]
     SECRET_DB[secret_id] = {
         "text": secret_payload,
@@ -54,7 +50,6 @@ def inline_secret_handler(update: Update, context: CallbackContext):
         "sender_id": sender.id
     }
 
-    # Setup the interactive buttons
     keyboard = [
         [
             InlineKeyboardButton(
@@ -65,7 +60,6 @@ def inline_secret_handler(update: Update, context: CallbackContext):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Frame safe output layout strings
     safe_sender_name = escape_markdown_v2(sender.first_name)
     formatted_targets = ", ".join(["@{}".format(escape_markdown_v2(u)) for u in target_usernames])
 
@@ -76,7 +70,6 @@ def inline_secret_handler(update: Update, context: CallbackContext):
         "_Only designated recipients can open this text frame\\._"
     ).format(safe_sender_name, sender.id, formatted_targets)
 
-    # Truncate descriptions nicely for the inline keyboard choice deck UI
     desc_snippet = secret_payload[:25] + "..." if len(secret_payload) > 25 else secret_payload
 
     results = [
@@ -92,18 +85,17 @@ def inline_secret_handler(update: Update, context: CallbackContext):
         )
     ]
 
-    context.bot.answer_inline_query(query_obj.id, results, cache_time=0, is_personal=True)
+    query_obj.answer(results, cache_time=0, is_personal=True)
 
 
-def read_inline_secret(update: Update, context: CallbackContext):
+def read_inline_secret(update, context):
     query = update.callback_query
     current_user = query.from_user
     
     secret_id = query.data.split("_")[1]
 
     if secret_id not in SECRET_DB:
-        context.bot.answer_callback_query(
-            callback_query_id=query.id,
+        query.answer(
             text="⚠️ Error: This secret envelope has expired or no longer exists.", 
             show_alert=True
         )
@@ -112,23 +104,18 @@ def read_inline_secret(update: Update, context: CallbackContext):
     data = SECRET_DB[secret_id]
     current_username = (current_user.username or "").lower()
 
-    # Permission validation check across all allowed users inside the collection array
     if current_username not in data["targets"] and current_user.id != data["sender_id"]:
-        context.bot.answer_callback_query(
-            callback_query_id=query.id,
+        query.answer(
             text="🚫 Access Denied! Your username is not authorized to read this secret capsule.", 
             show_alert=True
         )
         return
 
-    # Push verification contents out directly into popup windows
-    context.bot.answer_callback_query(
-        callback_query_id=query.id,
+    query.answer(
         text="🔑 Decrypted Secret Message:\n\n{}".format(data['text']), 
         show_alert=True
     )
 
-
-# Wire handlers cleanly into the central framework engine layers
-dispatcher.add_handler(InlineQueryHandler(inline_secret_handler))
-dispatcher.add_handler(CallbackQueryHandler(read_inline_secret, pattern=r"^secret_"))
+# Wire handlers using pure v13 syntax methods
+dispatcher.add_handler(InlineQueryHandler(inline_secret_handler, run_async=True))
+dispatcher.add_handler(CallbackQueryHandler(read_inline_secret, pattern=r"^secret_", run_async=True))
