@@ -1,3 +1,4 @@
+import os
 import collections
 import collections.abc
 
@@ -6,6 +7,14 @@ collections.Mapping = collections.abc.Mapping
 collections.MutableMapping = collections.abc.MutableMapping
 collections.Sequence = collections.abc.Sequence
 collections.MutableSequence = collections.abc.MutableSequence
+
+# Force-feed MAL environment variables to bypass third-party init check
+if not os.environ.get("MAL_CLIENT_ID"):
+    os.environ["MAL_CLIENT_ID"] = "dummy_id_to_bypass_init_check"
+if not os.environ.get("MAL_ACCESS_TOKEN"):
+    os.environ["MAL_ACCESS_TOKEN"] = "dummy_token"
+if not os.environ.get("MAL_REFRESH_TOKEN"):
+    os.environ["MAL_REFRESH_TOKEN"] = "dummy_refresh"
 
 import datetime
 import importlib
