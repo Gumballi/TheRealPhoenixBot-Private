@@ -1,6 +1,8 @@
 import os
 import collections
 import collections.abc
+import threading
+from http.server import SimpleHTTPRequestHandler, HTTPServer
 
 # Patch older libraries expecting Mapping in the top-level collections module
 collections.Mapping = collections.abc.Mapping
@@ -139,8 +141,6 @@ def send_help(chat_id, text, keyboard=None):
 
 @run_async
 def test(bot: Bot, update: Update):
-    # pprint(eval(str(update)))
-    # update.effective_message.reply_text("Hola tester! _I_ *have* `markdown`", parse_mode=ParseMode.MARKDOWN)
     update.effective_message.reply_text("This person edited a message")
     print(update.effective_message)
 
@@ -192,26 +192,19 @@ def error_callback(bot, update, error):
     except Unauthorized:
         print("no nono1")
         print(error)
-        # remove update.message.chat_id from conversation list
     except BadRequest:
         print("no nono2")
         print("BadRequest caught")
         print(error)
-
-        # handle malformed requests - read more below!
     except TimedOut:
         print("no nono3")
-        # handle slow connection problems
     except NetworkError:
         print("no nono4")
-        # handle other connection problems
     except ChatMigrated as err:
         print("no nono5")
         print(err)
-        # the chat_id of a group has changed, use e.new_chat_id instead
     except TelegramError:
         print(error)
-        # handle all other telegram related errors
 
 
 @run_async
@@ -227,8 +220,8 @@ def help_button(bot: Bot, update: Update):
             text = "Here is the help for the *{}* module:\n".format(HELPABLE[module].__mod_name__) \
                    + HELPABLE[module].__help__
             query.message.edit_text(text=text,
-                                     parse_mode=ParseMode.MARKDOWN,
-                                     reply_markup=InlineKeyboardMarkup(
+                                    parse_mode=ParseMode.MARKDOWN,
+                                    reply_markup=InlineKeyboardMarkup(
                                          [[InlineKeyboardButton(text="Back", callback_data="help_back")]]))
 
         elif prev_match:
@@ -250,7 +243,6 @@ def help_button(bot: Bot, update: Update):
                                      parse_mode=ParseMode.MARKDOWN,
                                      reply_markup=InlineKeyboardMarkup(paginate_modules(0, HELPABLE, "help")))
 
-        # ensure no spinny white circle
         bot.answer_callback_query(query.id)
     except BadRequest as excp:
         if excp.message not in [
@@ -263,12 +255,10 @@ def help_button(bot: Bot, update: Update):
 
 @run_async
 def get_help(bot: Bot, update: Update):
-    chat = update.effective_chat  # type: Optional[Chat]
+    chat = update.effective_chat
     args = update.effective_message.text.split(None, 1)
 
-    # ONLY send help in PM
     if chat.type != chat.PRIVATE:
-
         update.effective_message.reply_text("Contact me in PM to get the list of possible commands.",
                                             reply_markup=InlineKeyboardMarkup(
                                                 [[InlineKeyboardButton(text="Help",
@@ -293,7 +283,6 @@ def send_settings(chat_id, user_id, user=False):
                 "*{}*:\n{}".format(mod.__mod_name__, mod.__user_settings__(user_id)) for mod in USER_SETTINGS.values())
             dispatcher.bot.send_message(user_id, "These are your current settings:" + "\n\n" + settings,
                                         parse_mode=ParseMode.MARKDOWN)
-
         else:
             dispatcher.bot.send_message(user_id, "Seems like there aren't any user specific settings available :'(",
                                         parse_mode=ParseMode.MARKDOWN)
@@ -326,7 +315,7 @@ def settings_button(bot: Bot, update: Update):
             chat = bot.get_chat(chat_id)
             text = "*{}* has the following settings for the *{}* module:\n\n".format(escape_markdown(chat.title),
                                                                                      CHAT_SETTINGS[
-                                                                                         module].__mod_name__) + \
+                                                                                      module].__mod_name__) + \
                    CHAT_SETTINGS[module].__chat_settings__(chat_id, user.id)
             query.message.reply_text(text=text,
                                      parse_mode=ParseMode.MARKDOWN,
@@ -363,7 +352,6 @@ def settings_button(bot: Bot, update: Update):
                                      reply_markup=InlineKeyboardMarkup(paginate_modules(0, CHAT_SETTINGS, "stngs",
                                                                                         chat=chat_id)))
 
-        # ensure no spinny white circle
         bot.answer_callback_query(query.id)
         query.message.delete()
     except BadRequest as excp:
@@ -377,12 +365,11 @@ def settings_button(bot: Bot, update: Update):
 
 @run_async
 def get_settings(bot: Bot, update: Update):
-    chat = update.effective_chat  # type: Optional[Chat]
-    user = update.effective_user  # type: Optional[User]
-    msg = update.effective_message  # type: Optional[Message]
+    chat = update.effective_chat
+    user = update.effective_user
+    msg = update.effective_message
     args = msg.text.split(None, 1)
 
-    # ONLY send settings in PM
     if chat.type == chat.PRIVATE:
         send_settings(chat.id, user.id, True)
 
@@ -400,7 +387,7 @@ def get_settings(bot: Bot, update: Update):
 @run_async
 def donate(bot: Bot, update: Update):
     user = update.effective_message.from_user
-    chat = update.effective_chat  # type: Optional[Chat]
+    chat = update.effective_chat
 
     if chat.type == "private":
         update.effective_message.reply_text(DONATE_STRING, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
@@ -413,14 +400,13 @@ def donate(bot: Bot, update: Update):
     else:
         try:
             bot.send_message(user.id, DONATE_STRING, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
-
             update.effective_message.reply_text("I've PM'ed you about donating to my creator!")
         except Unauthorized:
             update.effective_message.reply_text("Contact me in PM first to get donation information.")
 
 
 def migrate_chats(bot: Bot, update: Update):
-    msg = update.effective_message  # type: Optional[Message]
+    msg = update.effective_message
     if msg.migrate_to_chat_id:
         old_chat = update.effective_chat.id
         new_chat = msg.migrate_to_chat_id
@@ -438,7 +424,18 @@ def migrate_chats(bot: Bot, update: Update):
     raise DispatcherHandlerStop
 
 
+def run_dummy_server():
+    # Render assigns an absolute port dynamically in the web system environment
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
+    LOGGER.info(f"Dummy background server listening on port {port}")
+    server.serve_forever()
+
+
 def main():
+    # Start the dummy server on a separate background thread to keep Render Free Tier happy
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+
     test_handler = CommandHandler("test", test)
     start_handler = CommandHandler("start", start, pass_args=True)
 
@@ -451,7 +448,6 @@ def main():
     donate_handler = CommandHandler("donate", donate)
     migrate_handler = MessageHandler(Filters.status_update.migrate, migrate_chats)
 
-    # dispatcher.add_handler(test_handler)
     dispatcher.add_handler(start_handler)
     dispatcher.add_handler(help_handler)
     dispatcher.add_handler(settings_handler)
@@ -460,9 +456,6 @@ def main():
     dispatcher.add_handler(migrate_handler)
     dispatcher.add_handler(donate_handler)
 
-    # dispatcher.add_error_handler(error_callback)
-
-    # add antiflood processor
     Dispatcher.process_update = process_update
 
     if WEBHOOK:
@@ -488,7 +481,6 @@ CHATS_TIME = {}
 
 
 def process_update(self, update):
-    # An error happened while polling
     if isinstance(update, TelegramError):
         try:
             self.dispatch_error(None, update)
@@ -518,16 +510,11 @@ def process_update(self, update):
             for handler in (x for x in self.handlers[group] if x.check_update(update)):
                 handler.handle_update(update, self)
                 break
-
-        # Stop processing with any other handler.
         except DispatcherHandlerStop:
             self.logger.debug('Stopping further handlers due to DispatcherHandlerStop')
             break
-
-        # Dispatch any error.
         except TelegramError as te:
             self.logger.warning('A TelegramError was raised while processing the Update')
-
             try:
                 self.dispatch_error(update, te)
             except DispatcherHandlerStop:
@@ -535,8 +522,6 @@ def process_update(self, update):
                 break
             except Exception:
                 self.logger.exception('An uncaught error was raised while handling the error')
-
-        # Errors should not stop the thread.
         except Exception:
             self.logger.exception('An uncaught error was raised while processing the update')
 
