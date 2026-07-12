@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 90" width="150" height="68">
+  <defs>
+    <!-- Smooth Linear Gradient -->
+    <linearGradient id="btnGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F46E5" />
+      <stop offset="100%" stop-color="#7C3AED" />
+    </linearGradient>
+    
+    <!-- Drop Shadow Filter -->
+    <filter id="dropShadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#000000" flood-opacity="0.15" />
+    </filter>
+
+    <style>
+      .button-text {
+        font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        font-size: 15px;
+        font-weight: 600;
+        fill: #FFFFFF;
+        letter-spacing: 0.5px;
+        pointer-events: none;
+      }
+    </style>
+  </defs>
+
+  <!-- 
+    The button group is shifted down using transform="translate(0, 30)" 
+    to create a built-in top margin of 30 pixels.
+  -->
+  <g transform="translate(0, 30)">
+    <!-- Background Rectangle (Slightly narrower and shorter) -->
+    <rect x="15" y="0" width="170" height="44" rx="22" fill="url(#btnGradient)" filter="url(#dropShadow)" />
+    
+    <!-- Button Text -->
+    <text class="button-text" x="100" y="27" text-anchor="middle">CLICK ME</text>
+  </g>
+</svg>
