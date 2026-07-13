@@ -16,23 +16,30 @@ def anonymous_secret_trigger(update: Update, context: CallbackContext):
     if not message or not message.text:
         return
 
-    # Pattern: @BotUsername @TargetUsername Secret Message
+    # Grab bot username safely from context
     bot_username = context.bot.username
-    pattern = rf"^@{re.escape(bot_username)}\s+(@\w+)\s+(.+)"
+    if not bot_username:
+        return
+
+    # Pattern: @BotUsername @TargetUsername Secret Message
+    pattern = rf"^@{re.escape(bot_username)}\s+@([A-Za-z0-9_]{{5,32}})\s+(.+)"
     match = re.match(pattern, message.text, re.IGNORECASE | re.DOTALL)
     
     if not match:
         return
 
-    target_username = match.group(1)
+    target_username = match.group(1) # E.g. "yuri" (no "@")
     secret_text = match.group(2)
     sender_user = message.from_user
 
-    # Extract user ID from username using the repo's internal function
-    target_user_id = get_user_id(target_username)
+    # Extract user ID from clean username using the repo's internal function
+    target_user_id = get_user_id(target_username.lower())
 
     if not target_user_id:
-        message.reply_text(f"Could not find user '{target_username}'. Please ensure the bot has interacted with them before.")
+        message.reply_text(
+            f"Error: Could not find user '@{target_username}'.\n"
+            f"Please ensure they have sent at least one message to the bot first."
+        )
         return
 
     if target_user_id == sender_user.id:
@@ -56,7 +63,7 @@ def anonymous_secret_trigger(update: Update, context: CallbackContext):
     # Inform the chat an anonymous secret message is waiting
     text = (
         f"*An Anonymous Secret Message Has Arrived!*\n\n"
-        f"*For:* {target_username}\n\n"
+        f"*For:* @{target_username}\n\n"
         f"_Only the designated recipient can open this text frame._"
     )
     
@@ -73,7 +80,9 @@ def anonymous_secret_trigger(update: Update, context: CallbackContext):
 def read_anonymous_secret(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
-    secret_id = query.data.split("_")[1]
+    
+    # Safely split on the first underscore to extract the exact uuid key
+    secret_id = query.data.split("_", 1)[1]
 
     if secret_id not in ANON_SECRET_DB:
         query.answer(text="Error: This anonymous secret message has expired or no longer exists.", show_alert=True)
@@ -98,5 +107,4 @@ Send anonymous secret messages to users in a group using a mention trigger.
 
 Usage:
 `@{bot_username} @username <your hidden text>`: Send an anonymous secret message to a user by username.
-""".format(bot_username=dispatcher.bot.username)
-
+"""
