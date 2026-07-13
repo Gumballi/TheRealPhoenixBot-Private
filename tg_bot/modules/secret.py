@@ -1,0 +1,106 @@
+import uuid
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import CallbackContext, CallbackQueryHandler, CommandHandler
+
+from tg_bot import dispatcher
+from tg_bot.modules.helper_funcs.extraction import extract_user_and_text
+from tg_bot.modules.users import get_user_id
+
+# Internal storage for active anonymous secrets
+ANON_SECRET_DB = {}
+
+def send_anonymous_secret(update: Update, context: CallbackContext):
+    message = update.effective_message
+    chat = update.effective_chat
+    args = context.args
+
+    if len(args) < 2:
+        message.reply_text("Usage: `/anonsecret <username> <your hidden text>`")
+        return
+
+    target_username = args[0]
+    secret_text = " ".join(args[1:])
+    sender_user = message.from_user
+
+    # Extract user ID from username
+    target_user_id, _ = extract_user_and_text(message, [target_username])
+
+    if not target_user_id:
+        message.reply_text(f"Could not find user '{target_username}'. Please ensure the bot has interacted with them before or use their Telegram ID.")
+        return
+
+    if target_user_id == sender_user.id:
+        message.reply_text("You can't send an anonymous secret message to yourself!")
+        return
+
+    # Generate a unique key for this secret instance
+    secret_id = str(uuid.uuid4())[:8]
+
+    # Store the payload details
+    ANON_SECRET_DB[secret_id] = {
+        "text": secret_text,
+        "target_id": target_user_id,
+        "sender_id": sender_user.id
+    }
+
+    # Build the interaction layout button
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                text="Reveal Anonymous Secret", 
+                callback_data=f"anonsecret_{secret_id}"
+            )
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Inform the chat an anonymous secret message is waiting
+    text = (
+        f"*An Anonymous Secret Message Has Arrived!*\n\n"
+        f"*For:* {target_username}\n\n"
+        f"_Only the designated recipient can open this text frame._"
+    )
+    
+    chat.send_message(text=text, reply_markup=reply_markup, parse_mode="Markdown")
+    
+    # Delete the triggering command so the raw text vanishes from the chat log
+    try:
+        message.delete()
+    except Exception:
+        # Fails silently if the bot isn't granted group admin deletion rights
+        pass
+
+
+def read_anonymous_secret(update: Update, context: CallbackContext):
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    # Extract the unique ID from callback_data
+    secret_id = query.data.split("_")[1]
+
+    if secret_id not in ANON_SECRET_DB:
+        query.answer(text="Error: This anonymous secret message has expired or no longer exists.", show_alert=True)
+        return
+
+    secret_data = ANON_SECRET_DB[secret_id]
+
+    # Strict ID check validation
+    if user_id != secret_data["target_id"]:
+        query.answer(text="Access Denied! This anonymous secret envelope belongs to someone else.", show_alert=True)
+        return
+
+    # Deliver the secret safely via an inline alert box pop-up
+    query.answer(text=f"Decrypted Anonymous Message:\n\n{secret_data['text']}", show_alert=True)
+
+
+# Wire the actions into your bot's dispatcher instance
+dispatcher.add_handler(CommandHandler("anonsecret", send_anonymous_secret, run_async=True))
+dispatcher.add_handler(CallbackQueryHandler(read_anonymous_secret, pattern=r"^anonsecret_", run_async=True))
+
+__mod_name__ = "Anonymous Secrets"
+__help__ = """
+Send anonymous secret messages to users in a group.
+
+Usage:
+`/anonsecret <username> <your hidden text>`: Reply to a user with an anonymous secret message.
+"""
