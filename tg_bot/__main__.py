@@ -4,6 +4,10 @@ import collections.abc
 import threading
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 
+import sys
+if __name__ == "__main__":
+    sys.modules["tg_bot.__main__"] = sys.modules["__main__"]
+    
 # Patch older libraries expecting Mapping in the top-level collections module
 collections.Mapping = collections.abc.Mapping
 collections.MutableMapping = collections.abc.MutableMapping
@@ -36,14 +40,74 @@ from telegram import ParseMode, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.error import Unauthorized, BadRequest, TimedOut, NetworkError, ChatMigrated, TelegramError
 from telegram.ext import CommandHandler, Filters, MessageHandler, CallbackQueryHandler
 from telegram.ext.dispatcher import run_async, DispatcherHandlerStop, Dispatcher
-from telegram.utils.helpers import escape_markdown
 
+# We patch the Dispatcher class *before* importing tg_bot and initializing the dispatcher instance!
+CHATS_CNT = {}
+CHATS_TIME = {}
+
+def process_update(self, update):
+    if isinstance(update, TelegramError):
+        try:
+            self.dispatch_error(None, update)
+        except Exception:
+            self.logger.exception('An uncaught error was raised while handling the error')
+        return
+
+    if not update.effective_chat:
+        return
+
+    now = datetime.datetime.utcnow()
+    cnt = CHATS_CNT.get(update.effective_chat.id, 0)
+
+    t = CHATS_TIME.get(update.effective_chat.id, datetime.datetime(1970, 1, 1))
+    if t and now > t + datetime.timedelta(0, 1):
+        CHATS_TIME[update.effective_chat.id] = now
+        cnt = 0
+    else:
+        cnt += 1
+
+    if cnt > 10:
+        return
+
+    CHATS_CNT[update.effective_chat.id] = cnt
+    
+    # Process updates inside a comprehensive try/finally sweep to handle dead database states
+    try:
+        for group in self.groups:
+            try:
+                for handler in (x for x in self.handlers[group] if x.check_update(update)):
+                    handler.handle_update(update, self)
+                    break
+            except DispatcherHandlerStop:
+                self.logger.debug('Stopping further handlers due to DispatcherHandlerStop')
+                break
+            except TelegramError as te:
+                self.logger.warning('A TelegramError was raised while processing the Update')
+                try:
+                    self.dispatch_error(update, te)
+                except DispatcherHandlerStop:
+                    self.logger.debug('Error handler stopped further handlers')
+                    break
+                except Exception:
+                    self.logger.exception('An uncaught error was raised while handling the error')
+            except Exception:
+                self.logger.exception('An uncaught error was raised while processing the update')
+    finally:
+        # Forces a database rollback if any module left a broken or uncommitted transaction state
+        try:
+            SESSION.rollback()
+        except Exception:
+            pass
+
+# Apply the patch immediately
+Dispatcher.process_update = process_update
+
+# Now we can safely import dispatcher and updater
 from tg_bot import dispatcher, updater, TOKEN, WEBHOOK, OWNER_ID, DONATION_LINK, CERT_PATH, PORT, URL, LOGGER, \
     ALLOW_EXCL
 # Import database session to safeguard against transaction lockups
 from tg_bot.modules.sql import SESSION
 # needed to dynamically load modules
-# NOTE: Module order is not guaranteed, specify that in the config file!
 from tg_bot.modules import ALL_MODULES
 from tg_bot.modules.helper_funcs.chat_status import is_user_admin
 from tg_bot.modules.helper_funcs.misc import paginate_modules
@@ -427,7 +491,6 @@ def migrate_chats(bot: Bot, update: Update):
 
 
 def run_dummy_server():
-    # Render assigns an absolute port dynamically in the web system environment
     port = int(os.environ.get("PORT", 10000))
     server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
     LOGGER.info(f"Dummy background server listening on port {port}")
@@ -458,8 +521,6 @@ def main():
     dispatcher.add_handler(migrate_handler)
     dispatcher.add_handler(donate_handler)
 
-    Dispatcher.process_update = process_update
-
     if WEBHOOK:
         LOGGER.info("Using webhooks.")
         updater.start_webhook(listen="127.0.0.1",
@@ -476,65 +537,6 @@ def main():
         LOGGER.info("Using long polling.")
         updater.start_polling(timeout=15, read_latency=4)
     updater.idle()
-
-
-CHATS_CNT = {}
-CHATS_TIME = {}
-
-
-def process_update(self, update):
-    if isinstance(update, TelegramError):
-        try:
-            self.dispatch_error(None, update)
-        except Exception:
-            self.logger.exception('An uncaught error was raised while handling the error')
-        return
-
-    if not update.effective_chat:
-        return
-
-    now = datetime.datetime.utcnow()
-    cnt = CHATS_CNT.get(update.effective_chat.id, 0)
-
-    t = CHATS_TIME.get(update.effective_chat.id, datetime.datetime(1970, 1, 1))
-    if t and now > t + datetime.timedelta(0, 1):
-        CHATS_TIME[update.effective_chat.id] = now
-        cnt = 0
-    else:
-        cnt += 1
-
-    if cnt > 10:
-        return
-
-    CHATS_CNT[update.effective_chat.id] = cnt
-    
-    # Process updates inside a comprehensive try/finally sweep to handle dead database states
-    try:
-        for group in self.groups:
-            try:
-                for handler in (x for x in self.handlers[group] if x.check_update(update)):
-                    handler.handle_update(update, self)
-                    break
-            except DispatcherHandlerStop:
-                self.logger.debug('Stopping further handlers due to DispatcherHandlerStop')
-                break
-            except TelegramError as te:
-                self.logger.warning('A TelegramError was raised while processing the Update')
-                try:
-                    self.dispatch_error(update, te)
-                except DispatcherHandlerStop:
-                    self.logger.debug('Error handler stopped further handlers')
-                    break
-                except Exception:
-                    self.logger.exception('An uncaught error was raised while handling the error')
-            except Exception:
-                self.logger.exception('An uncaught error was raised while processing the update')
-    finally:
-        # Forces a database rollback if any module left a broken or uncommitted transaction state
-        try:
-            SESSION.rollback()
-        except Exception:
-            pass
 
 
 if __name__ == '__main__':
