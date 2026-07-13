@@ -1,71 +1,87 @@
-# Urban Dictionary module by @TheRealPhoenix (Updated)
-import re
 import requests
-
-from telegram import Bot, Message, Update, ParseMode
+from telegram import Bot, Update, ParseMode
 from telegram.ext import CommandHandler, run_async
-
 from tg_bot import dispatcher
 
-
-def clean_bracketed_text(text: str) -> str:
-    """Removes the brackets around linked terms (e.g., [bruh] -> bruh)"""
-    if not text:
-        return ""
-    return re.sub(r'\[(.*?)\]', r'\1', text)
-
-
 @run_async
-def urban(bot: Bot, update: Update, args):
+def define(bot: Bot, update: Update, args):
     msg = update.effective_message
+    
+    # Check if the user actually provided a word to search
     if not args:
-        msg.reply_text("Please provide a slang/word to search! Example: /urban flex")
+        msg.reply_text("Please provide a word to define! Example: `/define apple`", parse_mode=ParseMode.MARKDOWN)
         return
 
-    word = " ".join(args)
-    # Fetching directly from the official Urban Dictionary API
-    res = requests.get(f"https://api.urbandictionary.com/v0/define?term={word}")
+    # clean the input word (lowercase and strip whitespace)
+    word = args[0].strip().lower()
     
-    if res.status_code == 200:
-        data = res.json()
-        results = data.get("list", [])
+    # Show typing action to let the user know the bot is working
+    bot.send_chat_action(chat_id=msg.chat_id, action="typing")
+    
+    try:
+        # Request data from dictionaryapi.dev (with a solid 8-second timeout)
+        res = requests.get(f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}", timeout=8)
         
-        if not results:
-            msg.reply_text(f"Could not find any results for '{word}' on Urban Dictionary!")
-            return
+        if res.status_code == 200:
+            data = res.json()
+            if not isinstance(data, list) or len(data) == 0:
+                msg.reply_text(f"Could not parse a valid definition for '<b>{word}</b>'.", parse_mode=ParseMode.HTML)
+                return
+                
+            first_entry = data[0]
+            word_name = first_entry.get("word", word).title()
             
-        # Get the top voted definition
-        top_def = results[0]
-        definition = clean_bracketed_text(top_def.get("definition", "No definition available."))
-        example = clean_bracketed_text(top_def.get("example", ""))
-        
-        # Format votes
-        thumbs_up = top_def.get("thumbs_up", 0)
-        thumbs_down = top_def.get("thumbs_down", 0)
-        
-        # Build the response message
-        reply = f"<b>Word:</b> {word.title()}\n\n"
-        reply += f"<b>Definition:</b>\n<i>{definition}</i>\n\n"
-        
-        if example:
-            reply += f"<b>Example:</b>\n<i>{example}</i>\n\n"
+            # Start formatting the HTML response string
+            reply = f"<b>Word:</b> {word_name}\n"
             
-        reply += f"👍 {thumbs_up} | 👎 {thumbs_down}"
-        
-        msg.reply_text(reply, parse_mode=ParseMode.HTML)
-    else:
-        msg.reply_text("Failed to connect to Urban Dictionary. Try again later!")
+            # Grab phonetic spelling if it exists
+            phonetic = first_entry.get("phonetic")
+            if phonetic:
+                reply += f"<i>{phonetic}</i>\n"
+            
+            reply += "\n"
+            
+            # Extract up to 3 meanings/definitions to keep the telegram message clean
+            meanings = first_entry.get("meanings", [])
+            if meanings:
+                for index, meaning in enumerate(meanings[:3], 1):
+                    part_of_speech = meaning.get("partOfSpeech", "noun").capitalize()
+                    definitions = meaning.get("definitions", [])
+                    
+                    if definitions:
+                        definition_text = definitions[0].get("definition", "No definition text found.")
+                        example_text = definitions[0].get("example", "")
+                        
+                        reply += f"<b>{index}. [{part_of_speech}]</b>\n"
+                        reply += f"<i>{definition_text}</i>\n"
+                        
+                        if example_text:
+                            reply += f"\"{example_text}\"\n"
+                        reply += "\n"
+                
+                # Strip trailing clean whitespace before sending
+                msg.reply_text(reply.strip(), parse_mode=ParseMode.HTML)
+            else:
+                msg.reply_text(f"Could not find any clear meanings for '<b>{word}</b>'.", parse_mode=ParseMode.HTML)
+                
+        elif res.status_code == 404:
+            msg.reply_text(f"Could not find a definition for '<b>{word}</b>'. Please check your spelling!", parse_mode=ParseMode.HTML)
+        else:
+            msg.reply_text("The dictionary service is currently acting up. Please try again later!")
 
+    except requests.exceptions.Timeout:
+        msg.reply_text("⏳ Connection timed out. The dictionary API took too long to respond.")
+    except requests.exceptions.RequestException:
+        msg.reply_text("🔌 Failed to connect to the dictionary service. It might be down temporarily.")
 
+# Metadata for help commands (standard pattern in many modular bot bases)
 __help__ = """
-Look up the latest internet slang, memes, and cultural terms directly from Urban Dictionary!
+*User Commands:*
+» `/define <word>`: Looks up the English dictionary definition of a word.
+"""
 
-*Available commands:*
- - /urban <word/phrase>: returns the top definition and example.
- """
- 
-__mod_name__ = "Urban Dictionary"
+__mod_name__ = "Dictionary"
 
-
-URBAN_HANDLER = CommandHandler("urban", urban, pass_args=True)
-dispatcher.add_handler(URBAN_HANDLER)
+# Register the Command Handler to the Dispatcher
+DEFINE_HANDLER = CommandHandler("define", define, pass_args=True)
+dispatcher.add_handler(DEFINE_HANDLER)
