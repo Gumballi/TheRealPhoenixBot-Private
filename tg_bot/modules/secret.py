@@ -1,14 +1,15 @@
 import uuid
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import CallbackContext, CallbackQueryHandler, CommandHandler
+from telegram.ext.dispatcher import run_async
 
 from tg_bot import dispatcher
-from tg_bot.modules.helper_funcs.extraction import extract_user_and_text
 from tg_bot.modules.users import get_user_id
 
 # Internal storage for active anonymous secrets
 ANON_SECRET_DB = {}
 
+@run_async
 def send_anonymous_secret(update: Update, context: CallbackContext):
     message = update.effective_message
     chat = update.effective_chat
@@ -22,11 +23,11 @@ def send_anonymous_secret(update: Update, context: CallbackContext):
     secret_text = " ".join(args[1:])
     sender_user = message.from_user
 
-    # Extract user ID from username
-    target_user_id, _ = extract_user_and_text(message, [target_username])
+    # Extract user ID from username using the repo's internal function
+    target_user_id = get_user_id(target_username)
 
     if not target_user_id:
-        message.reply_text(f"Could not find user '{target_username}'. Please ensure the bot has interacted with them before or use their Telegram ID.")
+        message.reply_text(f"Could not find user '{target_username}'. Please ensure the bot has interacted with them before.")
         return
 
     if target_user_id == sender_user.id:
@@ -71,6 +72,7 @@ def send_anonymous_secret(update: Update, context: CallbackContext):
         pass
 
 
+@run_async
 def read_anonymous_secret(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
@@ -94,13 +96,14 @@ def read_anonymous_secret(update: Update, context: CallbackContext):
 
 
 # Wire the actions into your bot's dispatcher instance
-dispatcher.add_handler(CommandHandler("anonsecret", send_anonymous_secret, run_async=True))
-dispatcher.add_handler(CallbackQueryHandler(read_anonymous_secret, pattern=r"^anonsecret_", run_async=True))
+dispatcher.add_handler(CommandHandler("anonsecret", send_anonymous_secret))
+dispatcher.add_handler(CallbackQueryHandler(read_anonymous_secret, pattern=r"^anonsecret_"))
 
 __mod_name__ = "Anonymous Secrets"
 __help__ = """
 Send anonymous secret messages to users in a group.
 
 Usage:
-`/anonsecret <username> <your hidden text>`: Reply to a user with an anonymous secret message.
+`/anonsecret <username> <your hidden text>`: Send an anonymous secret message to a user by username.
 """
+
