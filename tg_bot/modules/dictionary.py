@@ -1,4 +1,5 @@
-# Simple dictionary module by @TheRealPhoenix (Updated)
+# Urban Dictionary module by @TheRealPhoenix (Updated)
+import re
 import requests
 
 from telegram import Bot, Message, Update, ParseMode
@@ -7,51 +8,64 @@ from telegram.ext import CommandHandler, run_async
 from tg_bot import dispatcher
 
 
+def clean_bracketed_text(text: str) -> str:
+    """Removes the brackets around linked terms (e.g., [bruh] -> bruh)"""
+    if not text:
+        return ""
+    return re.sub(r'\[(.*?)\]', r'\1', text)
+
+
 @run_async
-def define(bot: Bot, update: Update, args):
+def urban(bot: Bot, update: Update, args):
     msg = update.effective_message
     if not args:
-        msg.reply_text("Please provide a word to define! Example: /define python")
+        msg.reply_text("Please provide a slang/word to search! Example: /urban flex")
         return
 
     word = " ".join(args)
-    # Using the active Free Dictionary API
-    res = requests.get(f"https://api.dictionaryapi.dev/api/v2/entries/en/{word}")
+    # Fetching directly from the official Urban Dictionary API
+    res = requests.get(f"https://api.urbandictionary.com/v0/define?term={word}")
     
     if res.status_code == 200:
-        try:
-            # Extract meanings list from the first matched word entry
-            meanings = res.json()[0].get("meanings")
-            if meanings:
-                meaning = ""
-                for count, m in enumerate(meanings, start=1):
-                    part_of_speech = m.get("partOfSpeech", "unknown")
-                    meaning += f"<b>{count}. {word}</b> <i>({part_of_speech})</i>\n"
-                    
-                    # Loop through definitions for this specific part of speech
-                    for i in m.get("definitions", []):
-                        defs = i.get("definition")
-                        meaning += f"• <i>{defs}</i>\n"
-                
-                msg.reply_text(meaning, parse_mode=ParseMode.HTML)
-            else:
-                msg.reply_text("No definitions found for that word.")
-        except (IndexError, AttributeError, ValueError):
-            msg.reply_text("Error parsing the dictionary results.")
+        data = res.json()
+        results = data.get("list", [])
+        
+        if not results:
+            msg.reply_text(f"Could not find any results for '{word}' on Urban Dictionary!")
+            return
+            
+        # Get the top voted definition
+        top_def = results[0]
+        definition = clean_bracketed_text(top_def.get("definition", "No definition available."))
+        example = clean_bracketed_text(top_def.get("example", ""))
+        
+        # Format votes
+        thumbs_up = top_def.get("thumbs_up", 0)
+        thumbs_down = top_def.get("thumbs_down", 0)
+        
+        # Build the response message
+        reply = f"<b>Word:</b> {word.title()}\n\n"
+        reply += f"<b>Definition:</b>\n<i>{definition}</i>\n\n"
+        
+        if example:
+            reply += f"<b>Example:</b>\n<i>{example}</i>\n\n"
+            
+        reply += f"👍 {thumbs_up} | 👎 {thumbs_down}"
+        
+        msg.reply_text(reply, parse_mode=ParseMode.HTML)
     else:
-        msg.reply_text("No results found!")
+        msg.reply_text("Failed to connect to Urban Dictionary. Try again later!")
 
 
 __help__ = """
-Ever stumbled upon a word that you didn't know of and wanted to look it up?
-With this module, you can find the definitions of words without having to leave the app!
+Look up the latest internet slang, memes, and cultural terms directly from Urban Dictionary!
 
 *Available commands:*
- - /define <word>: returns the definition of the word.
+ - /urban <word/phrase>: returns the top definition and example.
  """
  
-__mod_name__ = "Dictionary"
+__mod_name__ = "Urban Dictionary"
 
 
-DEFINE_HANDLER = CommandHandler("define", define, pass_args=True)
-dispatcher.add_handler(DEFINE_HANDLER)
+URBAN_HANDLER = CommandHandler("urban", urban, pass_args=True)
+dispatcher.add_handler(URBAN_HANDLER)
