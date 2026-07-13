@@ -13,13 +13,13 @@ def send_secret(update: Update, context: CallbackContext):
     
     # Prerequisite: Must be a reply to a target user
     if not message.reply_to_message:
-        message.reply_text("❌ Please reply to the user you want to send a secret message to.")
+        message.reply_text("Please reply to the user you want to send a secret message to.")
         return
 
     # Extract the secret message text (everything after /secret)
     args = context.args
     if not args:
-        message.reply_text("⚠️ Usage: Reply to a user with `/secret <your hidden text>`")
+        message.reply_text("Usage: Reply to a user with `/secret <your hidden text>`")
         return
         
     secret_text = " ".join(args)
@@ -27,7 +27,7 @@ def send_secret(update: Update, context: CallbackContext):
     sender_user = message.from_user
 
     if target_user.id == sender_user.id:
-        message.reply_text("🔒 You can't send a secret message to yourself!")
+        message.reply_text("You can't send a secret message to yourself!")
         return
 
     # Generate a unique key for this secret instance
@@ -44,7 +44,7 @@ def send_secret(update: Update, context: CallbackContext):
     keyboard = [
         [
             InlineKeyboardButton(
-                text="👁️ Reveal Secret", 
+                text="Reveal Secret", 
                 callback_data=f"secret_{secret_id}"
             )
         ]
@@ -53,9 +53,9 @@ def send_secret(update: Update, context: CallbackContext):
 
     # Inform the chat a secret message is waiting
     text = (
-        f"🔒 *A Secret Message Has Arrived!*\n\n"
-        f"👤 *From:* {sender_user.first_name}\n"
-        f"🎯 *For:* {target_user.first_name}\n\n"
+        f"*A Secret Message Has Arrived!*\n\n"
+        f"*From:* {sender_user.first_name}\n"
+        f"*For:* {target_user.first_name}\n\n"
         f"_Only the designated recipient can open this text frame._"
     )
     
@@ -77,18 +77,18 @@ def read_secret(update: Update, context: CallbackContext):
     secret_id = query.data.split("_")[1]
 
     if secret_id not in SECRET_DB:
-        query.answer(text="⚠️ Error: This secret message has expired or no longer exists.", show_alert=True)
+        query.answer(text="Error: This secret message has expired or no longer exists.", show_alert=True)
         return
 
     secret_data = SECRET_DB[secret_id]
 
     # Strict ID check validation (so missing usernames won't break anything)
     if user_id != secret_data["target_id"]:
-        query.answer(text="🚫 Access Denied! This secret envelope belongs to someone else.", show_alert=True)
+        query.answer(text="Access Denied! This secret envelope belongs to someone else.", show_alert=True)
         return
 
     # Deliver the secret safely via an inline alert box pop-up
-    query.answer(text=f"🔑 Decrypted Message:\n\n{secret_data['text']}", show_alert=True)
+    query.answer(text=f"Decrypted Message:\n\n{secret_data['text']}", show_alert=True)
 
 
 # Wire the actions into your bot's dispatcher instance using pure v13 syntax
