@@ -1,8 +1,7 @@
 import uuid
 import re
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import CallbackContext, CallbackQueryHandler, MessageHandler, Filters
-from telegram.ext.dispatcher import run_async
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import CallbackQueryHandler, MessageHandler, Filters
 
 from tg_bot import dispatcher, LOGGER
 from tg_bot.modules.users import get_user_id
@@ -10,14 +9,13 @@ from tg_bot.modules.users import get_user_id
 # Internal storage for active anonymous secrets
 ANON_SECRET_DB = {}
 
-@run_async
-def anonymous_secret_trigger(update: Update, context: CallbackContext):
+def anonymous_secret_trigger(bot, update):
     message = update.effective_message
     if not message or not message.text:
         return
 
-    # Grab bot username safely from context
-    bot_username = context.bot.username
+    # Grab bot username safely
+    bot_username = bot.username
     if not bot_username:
         return
 
@@ -37,8 +35,8 @@ def anonymous_secret_trigger(update: Update, context: CallbackContext):
 
     if not target_user_id:
         message.reply_text(
-            f"Error: Could not find user '@{target_username}'.\n"
-            f"Please ensure they have sent at least one message to the bot first."
+            "Error: Could not find user '@{target}'.\n"
+            "Please ensure they have sent at least one message to the bot first.".format(target=target_username)
         )
         return
 
@@ -57,15 +55,15 @@ def anonymous_secret_trigger(update: Update, context: CallbackContext):
     }
 
     # Build the interaction layout button
-    keyboard = [[InlineKeyboardButton(text="Reveal Anonymous Secret", callback_data=f"anonsecret_{secret_id}")]]
+    keyboard = [[InlineKeyboardButton(text="Reveal Anonymous Secret", callback_data="anonsecret_{}".format(secret_id))]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     # Inform the chat an anonymous secret message is waiting
     text = (
-        f"*An Anonymous Secret Message Has Arrived!*\n\n"
-        f"*For:* @{target_username}\n\n"
-        f"_Only the designated recipient can open this text frame._"
-    )
+        "*An Anonymous Secret Message Has Arrived!*\n\n"
+        "*For:* @{}\n\n"
+        "_Only the designated recipient can open this text frame._"
+    ).format(target_username)
     
     message.chat.send_message(text=text, reply_markup=reply_markup, parse_mode="Markdown")
     
@@ -76,8 +74,7 @@ def anonymous_secret_trigger(update: Update, context: CallbackContext):
         pass
 
 
-@run_async
-def read_anonymous_secret(update: Update, context: CallbackContext):
+def read_anonymous_secret(bot, update):
     query = update.callback_query
     user_id = query.from_user.id
     
@@ -94,12 +91,24 @@ def read_anonymous_secret(update: Update, context: CallbackContext):
         query.answer(text="Access Denied! This anonymous secret envelope belongs to someone else.", show_alert=True)
         return
 
-    query.answer(text=f"Decrypted Anonymous Message:\n\n{secret_data['text']}", show_alert=True)
+    query.answer(text="Decrypted Anonymous Message:\n\n{}".format(secret_data['text']), show_alert=True)
 
 
-# Register handlers
-dispatcher.add_handler(MessageHandler(Filters.text & Filters.chat_type.groups, anonymous_secret_trigger))
-dispatcher.add_handler(CallbackQueryHandler(read_anonymous_secret, pattern=r"^anonsecret_"))
+# Register handlers using v11's built-in run_async parameter
+dispatcher.add_handler(
+    MessageHandler(
+        Filters.text & Filters.group, 
+        anonymous_secret_trigger, 
+        run_async=True
+    )
+)
+dispatcher.add_handler(
+    CallbackQueryHandler(
+        read_anonymous_secret, 
+        pattern=r"^anonsecret_", 
+        run_async=True
+    )
+)
 
 __mod_name__ = "Anonymous Secrets"
 __help__ = """
@@ -107,4 +116,4 @@ Send anonymous secret messages to users in a group using a mention trigger.
 
 Usage:
 `@{bot_username} @username <your hidden text>`: Send an anonymous secret message to a user by username.
-"""
+""".format(bot_username=dispatcher.bot.username)

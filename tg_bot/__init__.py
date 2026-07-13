@@ -163,8 +163,8 @@ SUDO_USERS = list(SUDO_USERS)
 WHITELIST_USERS = list(WHITELIST_USERS)
 SUPPORT_USERS = list(SUPPORT_USERS)
 
-# Legacy Application Initialization (PTB v13 compatible)
-updater = tg.Updater(TOKEN, workers=WORKERS, use_context=True)
+# Legacy Application Initialization (PTB v11 compatible)
+updater = tg.Updater(TOKEN, workers=WORKERS)
 dispatcher = updater.dispatcher
 
 # Load handlers at the end to ensure all core settings exist
