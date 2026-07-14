@@ -4,7 +4,7 @@ from malclient.exceptions import APIException
 
 from telegram import Bot, Update, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import run_async
-from tg_bot import OWNER_ID, MAL_CLIENT_ID, MAL_ACCESS_TOKEN, MAL_REFRESH_TOKEN, dispatcher
+from tg_bot import OWNER_ID, MAL_CLIENT_ID, MAL_CLIENT_SECRET, MAL_ACCESS_TOKEN, MAL_REFRESH_TOKEN, dispatcher
 from tg_bot.modules.disable import DisableAbleCommandHandler
 
 # Import SQL database session and a helper model (we will create this helper next!)
@@ -36,7 +36,7 @@ def refresh_token(msg: Message, error: APIException) -> None:
             client.refresh_bearer_token(
                 client_id=MAL_CLIENT_ID,
                 refresh_token=r_token,
-                client_secret=None
+                client_secret=MAL_CLIENT_SECRET
             )
             new_access_token = client.bearer_token
             new_refresh_token = client.refresh_token
@@ -44,7 +44,7 @@ def refresh_token(msg: Message, error: APIException) -> None:
             # Save new tokens directly to the SQL Database!
             sql.update_tokens(new_access_token, new_refresh_token)
             
-            MSG_TEXT = (f"🔄 *MAL tokens refreshed and saved to Database!*\n\n"
+            MSG_TEXT = (f"*MAL tokens refreshed and saved to Database!*\n\n"
                         f"*New Access Token*: `{new_access_token[:15]}...`\n"
                         f"*New Refresh Token*: `{new_refresh_token[:15]}...`")
             dispatcher.bot.send_message(OWNER_ID, MSG_TEXT, parse_mode="MARKDOWN")
