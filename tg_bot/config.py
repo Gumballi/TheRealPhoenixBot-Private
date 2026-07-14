@@ -3,7 +3,7 @@ from tg_bot.sample_config import Config as SampleConfig
 
 
 class Config(SampleConfig):
-    # REQUIRED - Pulls safely from Render environment variables
+    # REQUIRED - Pulls safely from VPS environment variables
     API_KEY = os.environ.get("API_KEY", "PLACEHOLDER_TOKEN")
     OWNER_ID = int(os.environ.get("OWNER_ID", "0"))
     OWNER_USERNAME = os.environ.get("OWNER_USERNAME", "PLACEHOLDER_USER")
