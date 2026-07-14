@@ -1,13 +1,17 @@
 # Last.fm module by @TheRealPhoenix - https://github.com/rsktg
+import os
 import requests
 
 from telegram import Bot, Update, Message, Chat, ParseMode
 from telegram.ext import run_async, CommandHandler
 
-from tg_bot import dispatcher, LASTFM_API_KEY
+from tg_bot import dispatcher
 from tg_bot.modules.disable import DisableAbleCommandHandler
 
 import tg_bot.modules.sql.last_fm_sql as sql
+
+# Load the API Key directly from the system environment
+LASTFM_API_KEY = os.environ.get("LASTFM_API_KEY")
 
 
 @run_async
@@ -28,6 +32,7 @@ def clear_user(bot: Bot, update: Update):
     sql.set_user(user, "")
     update.effective_message.reply_text("Last.fm username successfully cleared from my database!")
     
+  
 @run_async
 def last_fm(bot: Bot, update: Update):
     msg = update.effective_message
@@ -38,19 +43,19 @@ def last_fm(bot: Bot, update: Update):
         msg.reply_text("You haven't set your username yet! Use /setuser <username>")
         return
     
+    if not LASTFM_API_KEY:
+        msg.reply_text("The Last.fm API Key is missing. Please check your hosting environment variables!")
+        return
+
     base_url = "http://ws.audioscrobbler.com/2.0"
     
     try:
-        # Diagnostic: print API key status to the console
-        print(f"[Last.fm Debug] Using API Key: {LASTFM_API_KEY[:5]}...{LASTFM_API_KEY[-5:] if LASTFM_API_KEY else 'NONE'}")
-        print(f"[Last.fm Debug] Querying username: {username}")
-
         res = requests.get(
             f"{base_url}?method=user.getrecenttracks&limit=3&extended=1&user={username}&api_key={LASTFM_API_KEY}&format=json",
             timeout=8
         )
         
-        # If it fails, tell us exactly what Last.fm returned!
+        # If it fails, output the actual API error code and message
         if res.status_code != 200:
             try:
                 err_data = res.json()
@@ -99,15 +104,15 @@ def last_fm(bot: Bot, update: Update):
                 
             rep = f"{user} is currently listening to:\n"
             if not loved:
-                rep += f"🎧  <code>{artist} - {song}</code>"
+                rep += f" <code>{artist} - {song}</code>"
             else:
-                rep += f"🎧  <code>{artist} - {song}</code> (♥️, loved)"
+                rep += f" <code>{artist} - {song}</code> (♥️, loved)"
                 
             # Embed image invisibly so Telegram displays it as a preview
             if image:
                 rep += f"<a href='{image}'>\u200c</a>"
         else:
-            # Fixed: Use a list of tuples to allow multiple songs by the same artist
+            # Safe parsing utilizing a list of tuples to avoid overwriting identical artists
             track_list = []
             for t in tracks[:3]: # Safe limit up to 3 tracks (won't crash if they have only 1 or 2)
                 t_artist = t.get("artist", {}).get("name", "Unknown Artist")
@@ -116,7 +121,7 @@ def last_fm(bot: Bot, update: Update):
                 
             rep = f"{user} was listening to:\n"
             for artist, song in track_list:
-                rep += f"🎧  <code>{artist} - {song}</code>\n"
+                rep += f" <code>{artist} - {song}</code>\n"
                 
             # Fetch total scrobbles
             user_info_res = requests.get(
