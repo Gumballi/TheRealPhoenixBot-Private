@@ -28,7 +28,6 @@ def clear_user(bot: Bot, update: Update):
     sql.set_user(user, "")
     update.effective_message.reply_text("Last.fm username successfully cleared from my database!")
     
-  
 @run_async
 def last_fm(bot: Bot, update: Update):
     msg = update.effective_message
@@ -42,12 +41,24 @@ def last_fm(bot: Bot, update: Update):
     base_url = "http://ws.audioscrobbler.com/2.0"
     
     try:
+        # Diagnostic: print API key status to the console
+        print(f"[Last.fm Debug] Using API Key: {LASTFM_API_KEY[:5]}...{LASTFM_API_KEY[-5:] if LASTFM_API_KEY else 'NONE'}")
+        print(f"[Last.fm Debug] Querying username: {username}")
+
         res = requests.get(
             f"{base_url}?method=user.getrecenttracks&limit=3&extended=1&user={username}&api_key={LASTFM_API_KEY}&format=json",
             timeout=8
         )
+        
+        # If it fails, tell us exactly what Last.fm returned!
         if res.status_code != 200:
-            msg.reply_text("Hmm... something went wrong.\nPlease ensure that you've set the correct username!")
+            try:
+                err_data = res.json()
+                err_msg = err_data.get("message", "Unknown API error")
+                err_code = err_data.get("error", "Unknown code")
+                msg.reply_text(f"Last.fm API Error (Status {res.status_code}):\n<code>Code {err_code}: {err_msg}</code>", parse_mode=ParseMode.HTML)
+            except Exception:
+                msg.reply_text(f"HTTP Error {res.status_code} received from Last.fm.")
             return
             
         data = res.json()
@@ -119,10 +130,10 @@ def last_fm(bot: Bot, update: Update):
         
         msg.reply_text(rep, parse_mode=ParseMode.HTML)
         
-    except requests.exceptions.RequestException:
-        msg.reply_text("Could not connect to Last.fm. Try again later!")
+    except requests.exceptions.RequestException as e:
+        msg.reply_text(f"Connection Error: Could not connect to Last.fm. ({e})")
     except Exception as e:
-        msg.reply_text("An error occurred while parsing your track data.")
+        msg.reply_text(f"An error occurred: {str(e)}")
 
 
 __help__ = """
