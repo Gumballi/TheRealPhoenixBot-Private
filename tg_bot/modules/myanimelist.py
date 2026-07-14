@@ -1,4 +1,5 @@
 from typing import List
+import requests
 from malclient import Client
 from malclient.exceptions import APIException
 
@@ -26,8 +27,15 @@ else:
 client.init(access_token=CURRENT_ACCESS_TOKEN)
 
 
-def refresh_token(msg: Message, error: APIException) -> None:
-    if str(error.response) == "<Response [401]>":
+def refresh_token(msg: Message, error: Exception) -> None:
+    # Handle both malclient APIException and general HTTP 401 errors
+    is_unauthorized = False
+    if isinstance(error, APIException) and str(error.response) == "<Response [401]>":
+        is_unauthorized = True
+    elif isinstance(error, requests.HTTPError) and error.response.status_code == 401:
+        is_unauthorized = True
+
+    if is_unauthorized:
         # Get latest refresh token from DB
         latest_tokens = sql.get_tokens()
         r_token = latest_tokens.refresh_token if latest_tokens else MAL_REFRESH_TOKEN
@@ -43,6 +51,10 @@ def refresh_token(msg: Message, error: APIException) -> None:
             
             # Save new tokens directly to the SQL Database!
             sql.update_tokens(new_access_token, new_refresh_token)
+            
+            # Update local global-like state if necessary (though the DB is our main source of truth now)
+            global CURRENT_ACCESS_TOKEN
+            CURRENT_ACCESS_TOKEN = new_access_token
             
             MSG_TEXT = (f"*MAL tokens refreshed and saved to Database!*\n\n"
                         f"*New Access Token*: `{new_access_token[:15]}...`\n"
@@ -74,53 +86,72 @@ def search_anime(bot: Bot, update: Update, args: List[str]) -> None:
         
     anime_id = anime[0].id
 
-    # Fields required to prevent malclient Pydantic model validation errors
-    detail_fields = [
-        "id", "title", "main_picture", "alternative_titles", "start_date", "end_date", 
-        "synopsis", "mean", "rank", "popularity", "num_list_users", "num_scoring_users", 
-        "nsfw", "created_at", "updated_at", "media_type", "status", "genres", 
-        "my_list_status", "num_episodes", "start_season", "broadcast", "source", 
-        "average_episode_duration", "rating", "studios", "statistics"
-    ]
+    # Fetch details directly from MAL API using requests to bypass malclient validation & signature issues
+    detail_fields = (
+        "id,title,main_picture,alternative_titles,start_date,end_date,synopsis,mean,rank,"
+        "popularity,num_list_users,num_scoring_users,nsfw,media_type,status,genres,"
+        "num_episodes,start_season,source,studios"
+    )
     
-    res = client.get_anime_details(anime_id, fields=detail_fields)
+    # Always fetch the token dynamically from DB to ensure it's fresh
+    latest_tokens = sql.get_tokens()
+    token = latest_tokens.access_token if latest_tokens else CURRENT_ACCESS_TOKEN
     
-    if res.status == "finished_airing":
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        url = f"https://api.myanimelist.net/v2/anime/{anime_id}?fields={detail_fields}"
+        req = requests.get(url, headers=headers)
+        req.raise_for_status()
+        res = req.json()
+    except requests.HTTPError as e:
+        refresh_token(msg, e)
+        return
+    except Exception as e:
+        msg.reply_text(f"Failed to fetch details: {e}")
+        return
+    
+    raw_status = res.get("status", "")
+    if raw_status == "finished_airing":
         status = "Finished Airing"
-        episodes = res.num_episodes
+        episodes = res.get("num_episodes")
     else:
         episodes = None
-        status = "Currently Airing" if res.status == "currently_airing" else res.status.replace('_', ' ').capitalize()
+        status = "Currently Airing" if raw_status == "currently_airing" else raw_status.replace('_', ' ').capitalize()
         
-    genres_list = [i.name for i in res.genres] if res.genres else []
+    genres_list = [i.get("name") for i in res.get("genres", [])] if res.get("genres") else []
     genres = ", ".join(genres_list) if genres_list else "None"
     
-    studio_list = [i.name for i in res.studios] if res.studios else []
+    studio_list = [i.get("name") for i in res.get("studios", [])] if res.get("studios") else []
     studios = ", ".join(studio_list) if studio_list else "None"
     
     premiered = "Unknown"
-    if res.start_season:
-        premier = res.start_season
-        # Cast season value to string safely before capitalizing
-        season_str = str(premier.season).capitalize() if hasattr(premier, 'season') else "Unknown"
-        premiered = f"{premier.year} {season_str}"
+    start_season = res.get("start_season")
+    if start_season:
+        year = start_season.get("year", "")
+        season = start_season.get("season", "").capitalize()
+        premiered = f"{year} {season}".strip() or "Unknown"
         
-    image = res.main_picture.large if res.main_picture else ""
+    main_picture = res.get("main_picture", {})
+    image = main_picture.get("large") or main_picture.get("medium") if main_picture else ""
     
-    text = f"<b>{res.title} ({res.alternative_titles.ja if res.alternative_titles else ''})</b>\n"
-    text += f"<b>Type</b>: <code>{res.media_type.upper() if res.media_type else 'Unknown'}</code>\n"
-    text += f"<b>Source</b>: <code>{res.source.replace('_', ' ').capitalize() if res.source else 'Unknown'}</code>\n"
+    alt_titles = res.get("alternative_titles", {})
+    ja_title = alt_titles.get("ja", "") if alt_titles else ""
+    title_suffix = f" ({ja_title})" if ja_title else ""
+    
+    text = f"<b>{res.get('title')}{title_suffix}</b>\n"
+    text += f"<b>Type</b>: <code>{res.get('media_type', 'Unknown').upper()}</code>\n"
+    text += f"<b>Source</b>: <code>{res.get('source', 'Unknown').replace('_', ' ').capitalize()}</code>\n"
     text += f"<b>Status</b>: <code>{status}</code>\n"
     text += f"<b>Genres</b>: <code>{genres}</code>\n"
     if episodes:
         text += f"<b>Episodes</b>: <code>{episodes}</code>\n"
-    text += f"<b>Score</b>: <code>{res.mean}</code>\n"
-    text += f"<b>Ranked</b>: <code>#{res.rank}</code>\n"
+    text += f"<b>Score</b>: <code>{res.get('mean', 'N/A')}</code>\n"
+    text += f"<b>Ranked</b>: <code>#{res.get('rank', 'N/A')}</code>\n"
     text += f"<b>Studio(s)</b>: <code>{studios}</code>\n"
     text += f"<b>Premiered</b>: <code>{premiered}</code>\n\n"
     if image:
         text += f"<a href='{image}'>\u200c</a>"
-    text += res.synopsis if res.synopsis else ""
+    text += res.get("synopsis", "")
     
     keyb = [
         [InlineKeyboardButton("More Information", url=f"https://myanimelist.net/anime/{anime_id}")]
@@ -147,34 +178,52 @@ def search_manga(bot: Bot, update: Update, args: List[str]) -> None:
         
     manga_id = manga[0].id
 
-    # Fields required to prevent malclient Pydantic model validation errors for Manga
-    manga_detail_fields = [
-        "id", "title", "main_picture", "alternative_titles", "start_date", "end_date", 
-        "synopsis", "mean", "rank", "popularity", "num_list_users", "num_scoring_users", 
-        "nsfw", "created_at", "updated_at", "media_type", "status", "genres", 
-        "my_list_status", "num_volumes", "num_chapters", "authors"
-    ]
+    # Fetch details directly from MAL API using requests
+    manga_detail_fields = (
+        "id,title,main_picture,alternative_titles,start_date,end_date,synopsis,mean,rank,"
+        "popularity,num_list_users,num_scoring_users,nsfw,media_type,status,genres,"
+        "num_volumes,num_chapters,authors"
+    )
     
-    res = client.get_manga_details(manga_id, fields=manga_detail_fields)
+    latest_tokens = sql.get_tokens()
+    token = latest_tokens.access_token if latest_tokens else CURRENT_ACCESS_TOKEN
     
-    genres_list = [i.name for i in res.genres] if res.genres else []
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        url = f"https://api.myanimelist.net/v2/manga/{manga_id}?fields={manga_detail_fields}"
+        req = requests.get(url, headers=headers)
+        req.raise_for_status()
+        res = req.json()
+    except requests.HTTPError as e:
+        refresh_token(msg, e)
+        return
+    except Exception as e:
+        msg.reply_text(f"Failed to fetch details: {e}")
+        return
+    
+    genres_list = [i.get("name") for i in res.get("genres", [])] if res.get("genres") else []
     genres = ", ".join(genres_list) if genres_list else "None"
     
-    image = res.main_picture.large if res.main_picture else ""
+    main_picture = res.get("main_picture", {})
+    image = main_picture.get("large") or main_picture.get("medium") if main_picture else ""
     
-    text = f"<b>{res.title} ({res.alternative_titles.ja if res.alternative_titles else ''})</b>\n"
-    text += f"<b>Type</b>: <code>{res.media_type.capitalize() if res.media_type else 'Unknown'}</code>\n"
-    text += f"<b>Status</b>: <code>{res.status.replace('_', ' ').capitalize() if res.status else 'Unknown'}</code>\n"
+    alt_titles = res.get("alternative_titles", {})
+    ja_title = alt_titles.get("ja", "") if alt_titles else ""
+    title_suffix = f" ({ja_title})" if ja_title else ""
+    
+    text = f"<b>{res.get('title')}{title_suffix}</b>\n"
+    text += f"<b>Type</b>: <code>{res.get('media_type', 'Unknown').capitalize()}</code>\n"
+    text += f"<b>Status</b>: <code>{res.get('status', 'Unknown').replace('_', ' ').capitalize()}</code>\n"
     text += f"<b>Genres</b>: <code>{genres}</code>\n"
-    text += f"<b>Score</b>: <code>{res.mean}</code>\n"
-    text += f"<b>Ranked</b>: <code>#{res.rank}</code>\n"
-    if res.num_volumes:
-        text += f"<b>Volumes</b>: <code>{res.num_volumes}</code>\n"
-    if res.num_chapters:
-        text += f"<b>Chapters</b>: <code>{res.num_chapters}</code>\n"
+    text += f"<b>Score</b>: <code>{res.get('mean', 'N/A')}</code>\n"
+    text += f"<b>Ranked</b>: <code>#{res.get('rank', 'N/A')}</code>\n"
+    if res.get("num_volumes"):
+        text += f"<b>Volumes</b>: <code>{res.get('num_volumes')}</code>\n"
+    if res.get("num_chapters"):
+        text += f"<b>Chapters</b>: <code>{res.get('num_chapters')}</code>\n"
     if image:
         text += f"<a href='{image}'>\u200c</a>"
-    text += f"\n{res.synopsis if res.synopsis else ''}"
+    text += f"\n{res.get('synopsis', '')}"
     
     keyb = [
         [InlineKeyboardButton("More Information", url=f"https://myanimelist.net/manga/{manga_id}")]
