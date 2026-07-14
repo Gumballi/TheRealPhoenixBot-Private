@@ -12,6 +12,7 @@ class Config(SampleConfig):
     MAL_CLIENT_ID = os.environ.get("MAL_CLIENT_ID", "")
     MAL_ACCESS_TOKEN = os.environ.get("MAL_ACCESS_TOKEN", "")
     MAL_REFRESH_TOKEN = os.environ.get("MAL_REFRESH_TOKEN", "")
+    MAL_CLIENT_SECRET = os.environ.get("MAL_CLIENT_SECRET", "")
 
     # RECOMMENDED
     SQLALCHEMY_DATABASE_URI = os.environ.get("SQLALCHEMY_DATABASE_URI", "postgresql://user:pass@host/db")

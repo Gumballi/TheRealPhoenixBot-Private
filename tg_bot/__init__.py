@@ -150,6 +150,7 @@ else:
     MAL_CLIENT_ID = Config.MAL_CLIENT_ID
     MAL_ACCESS_TOKEN = Config.MAL_ACCESS_TOKEN
     MAL_REFRESH_TOKEN = Config.MAL_REFRESH_TOKEN
+    MAL_CLIENT_SECRET = Config.MAL_CLIENT_SECRET
     try:
         BL_CHATS = {int(x) for x in Config.BL_CHATS or []}
     except ValueError:
