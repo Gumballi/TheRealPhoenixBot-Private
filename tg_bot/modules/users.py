@@ -2,8 +2,15 @@ from io import BytesIO
 from time import sleep
 from typing import Optional
 
-from telegram import TelegramError, Chat, Message
-from telegram import Update, Bot
+from telegram import (
+    TelegramError, 
+    Chat, 
+    Message, 
+    Update, 
+    Bot,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
 from telegram.error import BadRequest, Unauthorized, RetryAfter
 from telegram.ext import MessageHandler, Filters, CommandHandler
 from telegram.ext.dispatcher import run_async
@@ -49,21 +56,45 @@ def get_user_id(username):
 
 @run_async
 def start(bot: Bot, update: Update):
-    # Only reply with the welcome text if the user sends /start in a Private Message (PM)
+    # Only reply with the welcome animation if the user sends /start in a Private Message (PM)
     if update.effective_chat.type == "private":
         first_name = update.effective_user.first_name
         bot_name = bot.first_name
         
+        # Zenitsu GIF link
+        start_gif_url = "https://telegra.ph/file/93612a540608640355f20.mp4"
+        
+        # Text matching your screenshot layout
         pm_start_text = (
-            f"Hey {first_name}! 👋\n\n"
-            f"Welcome to *{bot_name}*.\n"
-            "I'm fully online, restored, and ready to help you manage group chats, or run commands!\n\n"
-            "Type /help to see what I can do."
+            f"Hi {first_name}, my name is {bot_name}!\n\n"
+            "You can find the list of available commands with /help."
         )
-        update.effective_message.reply_text(
-            text=pm_start_text,
-            parse_mode="Markdown"
-        )
+        
+        # Inline button for inviting the bot
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    text=f"Add {bot_name} to your group.",
+                    url="http://t.me/TheRealPhoenixRestoredbot?startgroup=botstart"
+                )
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        try:
+            bot.send_animation(
+                chat_id=update.effective_chat.id,
+                animation=start_gif_url,
+                caption=pm_start_text,
+                reply_markup=reply_markup
+            )
+        except Exception as e:
+            LOGGER.error(f"Failed to send start GIF: {e}")
+            # Fallback to text + button if Telegram fails to stream the GIF
+            update.effective_message.reply_text(
+                text=pm_start_text,
+                reply_markup=reply_markup
+            )
 
 
 @run_async
@@ -168,12 +199,14 @@ __help__ = ""  # no help string
 
 __mod_name__ = "Users"
 
+# Handler declarations
 START_HANDLER = CommandHandler("start", start)
 BROADCAST_HANDLER = CommandHandler("broadcast", broadcast, filters=Filters.user(OWNER_ID))
 USER_HANDLER = MessageHandler(Filters.all & Filters.group, log_user)
 CHATLIST_HANDLER = CommandHandler("chatlist", chats, filters=CustomFilters.sudo_filter)
 DELETE_CHATS_HANDLER = CommandHandler("cleanchats", rem_chat, filters=Filters.user(OWNER_ID))
 
+# Registering handlers to dispatcher
 dispatcher.add_handler(USER_HANDLER, USERS_GROUP)
 dispatcher.add_handler(START_HANDLER)
 dispatcher.add_handler(BROADCAST_HANDLER)
