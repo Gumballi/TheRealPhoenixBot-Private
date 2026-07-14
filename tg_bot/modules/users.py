@@ -48,6 +48,25 @@ def get_user_id(username):
 
 
 @run_async
+def start(bot: Bot, update: Update):
+    # Only reply with the welcome text if the user sends /start in a Private Message (PM)
+    if update.effective_chat.type == "private":
+        first_name = update.effective_user.first_name
+        bot_name = bot.first_name
+        
+        pm_start_text = (
+            f"Hey {first_name}! 👋\n\n"
+            f"Welcome to *{bot_name}*.\n"
+            "I'm fully online, restored, and ready to help you manage group chats, or run commands!\n\n"
+            "Type /help to see what I can do."
+        )
+        update.effective_message.reply_text(
+            text=pm_start_text,
+            parse_mode="Markdown"
+        )
+
+
+@run_async
 def broadcast(bot: Bot, update: Update):
     to_send = update.effective_message.text.split(None, 1)
     if len(to_send) >= 2:
@@ -149,12 +168,14 @@ __help__ = ""  # no help string
 
 __mod_name__ = "Users"
 
+START_HANDLER = CommandHandler("start", start)
 BROADCAST_HANDLER = CommandHandler("broadcast", broadcast, filters=Filters.user(OWNER_ID))
 USER_HANDLER = MessageHandler(Filters.all & Filters.group, log_user)
 CHATLIST_HANDLER = CommandHandler("chatlist", chats, filters=CustomFilters.sudo_filter)
 DELETE_CHATS_HANDLER = CommandHandler("cleanchats", rem_chat, filters=Filters.user(OWNER_ID))
 
 dispatcher.add_handler(USER_HANDLER, USERS_GROUP)
+dispatcher.add_handler(START_HANDLER)
 dispatcher.add_handler(BROADCAST_HANDLER)
 dispatcher.add_handler(CHATLIST_HANDLER)
 dispatcher.add_handler(DELETE_CHATS_HANDLER)
