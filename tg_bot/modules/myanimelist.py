@@ -7,7 +7,7 @@ from telegram.ext import run_async
 from tg_bot import OWNER_ID, MAL_CLIENT_ID, MAL_CLIENT_SECRET, MAL_ACCESS_TOKEN, MAL_REFRESH_TOKEN, dispatcher
 from tg_bot.modules.disable import DisableAbleCommandHandler
 
-# Import SQL database session and a helper model (we will create this helper next!)
+# Import SQL database session and our helper model
 from tg_bot.modules.sql import mal_sql as sql
 
 client = Client()
@@ -71,30 +71,45 @@ def search_anime(bot: Bot, update: Update, args: List[str]) -> None:
     if not anime:
         msg.reply_text("Not found!")
         return
+        
     anime_id = anime[0].id
-    res = client.get_anime_details(anime_id)
+
+    # Fields required to prevent malclient Pydantic model validation errors
+    detail_fields = [
+        "id", "title", "main_picture", "alternative_titles", "start_date", "end_date", 
+        "synopsis", "mean", "rank", "popularity", "num_list_users", "num_scoring_users", 
+        "nsfw", "created_at", "updated_at", "media_type", "status", "genres", 
+        "my_list_status", "num_episodes", "start_season", "broadcast", "source", 
+        "average_episode_duration", "rating", "studios", "statistics"
+    ]
+    
+    res = client.get_anime_details(anime_id, fields=detail_fields)
+    
     if res.status == "finished_airing":
         status = "Finished Airing"
         episodes = res.num_episodes
     else:
         episodes = None
-    genres_list = []
-    for i in res.genres:
-        genres_list.append(i.name)
-    genres = ", ".join(genres_list)
-    studio_list = []
-    for i in res.studios:
-        studio_list.append(i.name)
-    studios = ", ".join(studio_list)
-    if res.status == "currently_airing":
-        status = "Currently Airing"
+        status = "Currently Airing" if res.status == "currently_airing" else res.status.replace('_', ' ').capitalize()
+        
+    genres_list = [i.name for i in res.genres] if res.genres else []
+    genres = ", ".join(genres_list) if genres_list else "None"
+    
+    studio_list = [i.name for i in res.studios] if res.studios else []
+    studios = ", ".join(studio_list) if studio_list else "None"
+    
+    premiered = "Unknown"
     if res.start_season:
         premier = res.start_season
-    premiered = f"{premier.year} {premier.season.capitalize()}"
-    image = res.main_picture.large
-    text = f"<b>{res.title} ({res.alternative_titles.ja})</b>\n"
-    text += f"<b>Type</b>: <code>{res.media_type.upper()}</code>\n"
-    text += f"<b>Source</b>: <code>{res.source.replace('_', ' ').capitalize()}</code>\n"
+        # Cast season value to string safely before capitalizing
+        season_str = str(premier.season).capitalize() if hasattr(premier, 'season') else "Unknown"
+        premiered = f"{premier.year} {season_str}"
+        
+    image = res.main_picture.large if res.main_picture else ""
+    
+    text = f"<b>{res.title} ({res.alternative_titles.ja if res.alternative_titles else ''})</b>\n"
+    text += f"<b>Type</b>: <code>{res.media_type.upper() if res.media_type else 'Unknown'}</code>\n"
+    text += f"<b>Source</b>: <code>{res.source.replace('_', ' ').capitalize() if res.source else 'Unknown'}</code>\n"
     text += f"<b>Status</b>: <code>{status}</code>\n"
     text += f"<b>Genres</b>: <code>{genres}</code>\n"
     if episodes:
@@ -103,8 +118,10 @@ def search_anime(bot: Bot, update: Update, args: List[str]) -> None:
     text += f"<b>Ranked</b>: <code>#{res.rank}</code>\n"
     text += f"<b>Studio(s)</b>: <code>{studios}</code>\n"
     text += f"<b>Premiered</b>: <code>{premiered}</code>\n\n"
-    text += f"<a href='{image}'>\u200c</a>"
-    text += res.synopsis
+    if image:
+        text += f"<a href='{image}'>\u200c</a>"
+    text += res.synopsis if res.synopsis else ""
+    
     keyb = [
         [InlineKeyboardButton("More Information", url=f"https://myanimelist.net/anime/{anime_id}")]
     ]
@@ -127,17 +144,27 @@ def search_manga(bot: Bot, update: Update, args: List[str]) -> None:
     if not manga:
         msg.reply_text("Not found!")
         return
+        
     manga_id = manga[0].id
-    res = client.get_manga_details(manga_id)
-    genres_list = []
-    for i in res.genres:
-        genres_list.append(i.name)
-    genres = ", ".join(genres_list)
-    image = res.main_picture.large
+
+    # Fields required to prevent malclient Pydantic model validation errors for Manga
+    manga_detail_fields = [
+        "id", "title", "main_picture", "alternative_titles", "start_date", "end_date", 
+        "synopsis", "mean", "rank", "popularity", "num_list_users", "num_scoring_users", 
+        "nsfw", "created_at", "updated_at", "media_type", "status", "genres", 
+        "my_list_status", "num_volumes", "num_chapters", "authors"
+    ]
     
-    text = f"<b>{res.title} ({res.alternative_titles.ja})</b>\n"
-    text += f"<b>Type</b>: <code>{res.media_type.capitalize()}</code>\n"
-    text += f"<b>Status</b>: <code>{res.status.replace('_', ' ').capitalize()}</code>\n"
+    res = client.get_manga_details(manga_id, fields=manga_detail_fields)
+    
+    genres_list = [i.name for i in res.genres] if res.genres else []
+    genres = ", ".join(genres_list) if genres_list else "None"
+    
+    image = res.main_picture.large if res.main_picture else ""
+    
+    text = f"<b>{res.title} ({res.alternative_titles.ja if res.alternative_titles else ''})</b>\n"
+    text += f"<b>Type</b>: <code>{res.media_type.capitalize() if res.media_type else 'Unknown'}</code>\n"
+    text += f"<b>Status</b>: <code>{res.status.replace('_', ' ').capitalize() if res.status else 'Unknown'}</code>\n"
     text += f"<b>Genres</b>: <code>{genres}</code>\n"
     text += f"<b>Score</b>: <code>{res.mean}</code>\n"
     text += f"<b>Ranked</b>: <code>#{res.rank}</code>\n"
@@ -145,8 +172,10 @@ def search_manga(bot: Bot, update: Update, args: List[str]) -> None:
         text += f"<b>Volumes</b>: <code>{res.num_volumes}</code>\n"
     if res.num_chapters:
         text += f"<b>Chapters</b>: <code>{res.num_chapters}</code>\n"
-    text += f"<a href='{image}'>\u200c</a>"
-    text += f"\n{res.synopsis}"
+    if image:
+        text += f"<a href='{image}'>\u200c</a>"
+    text += f"\n{res.synopsis if res.synopsis else ''}"
+    
     keyb = [
         [InlineKeyboardButton("More Information", url=f"https://myanimelist.net/manga/{manga_id}")]
     ]
