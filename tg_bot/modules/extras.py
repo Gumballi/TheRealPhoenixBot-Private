@@ -231,31 +231,59 @@ def pat(bot: Bot, update: Update):
 def wiki(bot: Bot, update: Update):
     msg = update.effective_message.reply_to_message if update.effective_message.reply_to_message else update.effective_message
     res = ""
+    
+    # Bug 1 Fix: Safely handle parsing without crashing on empty /wiki commands
     if msg == update.effective_message:
-        search = msg.text.split(" ", maxsplit=1)[1]
+        parts = msg.text.split(" ", maxsplit=1)
+        if len(parts) < 2:
+            update.effective_message.reply_text("Please provide a search term! Example: /wiki Python (programming language)")
+            return
+        search = parts[1]
     else:
         search = msg.text
-    try:
-        res = wikipedia.summary(search)
-    except DisambiguationError as e:
-        update.message.reply_text("Disambiguated pages found! Adjust your query accordingly.\n<i>{}</i>".format(e),
-        parse_mode=ParseMode.HTML)
-    except PageError as e:
-        update.message.reply_text("<code>{}</code>".format(e), parse_mode=ParseMode.HTML)
-    if res:
-        result = f"<b>{search}</b>\n\n"
-        result += f"<i>{res}</i>\n"
-        result += f"""<a href="https://en.wikipedia.org/wiki/{search.replace(" ", "%20")}">Read more...</a>"""
-        if len(result) > 4000:
-            with open("result.txt", 'w') as f:
-                f.write(f"{result}\n\nUwU OwO OmO UmU")
-            with open("result.txt", 'rb') as f:
-                bot.send_document(document=f, filename=f.name,
-                    reply_to_message_id=update.message.message_id, chat_id=update.effective_chat.id,
-                    parse_mode=ParseMode.HTML)
-        else:
-            update.message.reply_text(result, parse_mode=ParseMode.HTML)
 
+    try:
+        # Bug 2 Fix: Attempt to get the page summary
+        res = wikipedia.summary(search, sentences=3) # Limit to 3 sentences to keep telegram clean
+    except DisambiguationError as e:
+        update.effective_message.reply_text(
+            f"<b>Disambiguation found!</b> Adjust your query accordingly:\n\n<i>{e.options[:5]}</i>",
+            parse_mode=ParseMode.HTML
+        )
+        return # Stop execution here
+    except PageError as e:
+        # If the page doesn't exist, try to search for similar suggestions
+        suggestions = wikipedia.search(search)
+        if suggestions:
+            update.effective_message.reply_text(
+                f"Page not found. Did you mean one of these?\n• <code>" + "</code>\n• <code>".join(suggestions[:5]) + "</code>", 
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            update.effective_message.reply_text(f"❌ Page not found for: <code>{search}</code>", parse_mode=ParseMode.HTML)
+        return # Stop execution here
+    except Exception as e:
+        update.effective_message.reply_text(f"An unexpected error occurred: {str(e)}")
+        return
+
+    # Send result if we obtained a valid summary
+    if res:
+        result = f"<b>{search.title()}</b>\n\n"
+        result += f"<i>{res}</i>\n\n"
+        result += f"""<a href="https://en.wikipedia.org/wiki/{urllib.parse.quote(search)}">Read more...</a>"""
+        
+        if len(result) > 4000:
+            with open("result.txt", 'w', encoding='utf-8') as f:
+                f.write(result)
+            with open("result.txt", 'rb') as f:
+                bot.send_document(
+                    document=f, 
+                    filename="wiki_result.txt",
+                    reply_to_message_id=update.effective_message.message_id, 
+                    chat_id=update.effective_chat.id
+                )
+        else:
+            update.effective_message.reply_text(result, parse_mode=ParseMode.HTML, disable_web_page_preview=False)
 
 @run_async
 def judge(bot: Bot, update: Update):
