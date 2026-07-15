@@ -16,7 +16,7 @@ API_KEY = os.environ.get("AI_API_KEY")
 if API_KEY:
     genai.configure(api_key=API_KEY)
     # Using gemini-1.5-flash as it is free, fast, and highly capable
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('models/gemini-1.5-flash')
 else:
     LOGGER.warning("GEMINI_API_KEY is not set. Gemini module will be disabled.")
     model = None
