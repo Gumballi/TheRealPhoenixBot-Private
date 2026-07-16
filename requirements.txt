@@ -19,4 +19,5 @@ tswift
 pyrate-limiter>=2.8,<3.0
 loguru
 malclient-upgraded
-google-genai
+google-genai>=0.1.1
+mistralai>=1.0.0
