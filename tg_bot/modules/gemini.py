@@ -17,8 +17,8 @@ API_KEY = os.environ.get("AI_API_KEY") or os.environ.get("GEMINI_API_KEY")
 if API_KEY:
     # Under google-genai, we initialize a client instance
     client = genai.Client(api_key=API_KEY)
-    # Using the standard flash model identifier
-    MODEL_NAME = 'gemini-2.5-pro'
+    # Using the current GA flash model identifier (gemini-1.5-* was fully shut down in 2026)
+    MODEL_NAME = 'gemini-3.5-flash'
 else:
     LOGGER.warning("AI_API_KEY / GEMINI_API_KEY is not set. Gemini module will be disabled.")
     client = None
@@ -45,7 +45,7 @@ def generate_ai_response(prompt: str) -> str:
         )
         return response.text.strip()
     except Exception as e:
-        LOGGER.error(f"[gemini] Gemini API execution failed: {e}")
+        LOGGER.error(f"[gemini] Gemini API execution failed: {type(e).__name__}: {e}", exc_info=True)
         return "Sorry, I had a brief neural misfire. Could you try asking that again?"
 
 
