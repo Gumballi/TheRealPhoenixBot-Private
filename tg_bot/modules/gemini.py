@@ -70,7 +70,8 @@ def ask_ai(bot: Bot, update: Update, args):
 def mention_chatbot(bot: Bot, update: Update):
     """Handles auto-replying when the bot is tagged (@TheRealPhoenixBot) in groups or PM'd directly."""
     msg = update.effective_message
-    
+    LOGGER.info(f"[gemini] mention_chatbot triggered by {msg.from_user.id} in chat {msg.chat_id}")
+
     # Extract the query text, removing the bot's tag if present
     query = msg.text
     bot_username = f"@{bot.username}"
@@ -91,11 +92,16 @@ ASK_HANDLER = DisableAbleCommandHandler(["ask", "ai"], ask_ai, pass_args=True)
 dispatcher.add_handler(ASK_HANDLER)
 
 # 2. Mention handler: triggers when the bot's username is tagged, or when direct messaged in PM
+# NOTE: registered in a dedicated group (not the default group 0). PTB v13 only runs the
+# FIRST matching handler within a given group, then stops checking that group. Other modules
+# (notes, filters, blacklists, antiflood, etc.) commonly register broad Filters.text handlers
+# in group 0, which would otherwise swallow every message before this one ever gets a turn.
+# Groups are evaluated independently, so putting this in its own group guarantees it always runs.
 MENTION_HANDLER = MessageHandler(
-    Filters.text & (Filters.entity("mention") | Filters.private), 
+    Filters.text & (Filters.entity("mention") | Filters.private) & (~Filters.command), 
     mention_chatbot
 )
-dispatcher.add_handler(MENTION_HANDLER)
+dispatcher.add_handler(MENTION_HANDLER, group=10)
 
 # Module details for the main system
 __help__ = """
