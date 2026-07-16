@@ -18,7 +18,7 @@ if API_KEY:
     # Under google-genai, we initialize a client instance
     client = genai.Client(api_key=API_KEY)
     # Using the standard flash model identifier
-    MODEL_NAME = 'gemini-1.5-flash'
+    MODEL_NAME = 'gemini-1.5-pro-002'
 else:
     LOGGER.warning("AI_API_KEY / GEMINI_API_KEY is not set. Gemini module will be disabled.")
     client = None
