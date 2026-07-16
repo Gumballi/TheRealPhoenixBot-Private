@@ -117,4 +117,5 @@ Send anonymous secret messages to users in a group using a mention trigger.
 
 Usage:
 `@{bot_username} @username <your hidden text>`: Send an anonymous secret message to a user by username.
+Under Construction Right Now : Unavailable 
 """.format(bot_username=dispatcher.bot.username)
