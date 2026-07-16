@@ -49,7 +49,7 @@ HUGS = (
 "(っ⇀⑃↼)っ",
 "(つ´∀｀)つ",
 "(.づσ▿σ)づ.",
-"⊂(´・ω·｀⊂)",
+"⊂(´・ω・｀⊂)",
 "(づ￣ ³￣)づ",
 "(.づ◡﹏◡)づ.",
 )
@@ -180,12 +180,12 @@ def hug(bot: Bot, update: Update):
     
 @run_async
 def toss(bot: Bot, update: Update):
-     update.effective_message.reply_text(random.choice(TOSS))
+ 	update.effective_message.reply_text(random.choice(TOSS))
 
 
 @run_async
 def react(bot: Bot, update: Update):
-     # reply to correct message 
+	 # reply to correct message 
     reply_text = update.effective_message.reply_to_message.reply_text if update.effective_message.reply_to_message else update.effective_message.reply_text
     reply_text = reply_text(random.choice(REACTS))
     
@@ -217,14 +217,14 @@ def pat(bot: Bot, update: Update):
     msg_id = update.effective_message.reply_to_message.message_id if update.effective_message.reply_to_message else update.effective_message.message_id
     pats = []
     pats = json.loads(urllib.request.urlopen(urllib.request.Request(
-    '[http://headp.at/js/pats.json](http://headp.at/js/pats.json)',
+    'http://headp.at/js/pats.json',
     headers={'User-Agent': 'Mozilla/5.0 (X11; U; Linux i686) '
          'Gecko/20071127 Firefox/2.0.0.11'}
     )).read().decode('utf-8'))
     if "@" in msg and len(msg) > 5:
-        bot.send_photo(chat_id, f'[https://headp.at/pats/](https://headp.at/pats/){urllib.parse.quote(random.choice(pats))}', caption=msg)
+        bot.send_photo(chat_id, f'https://headp.at/pats/{urllib.parse.quote(random.choice(pats))}', caption=msg)
     else:
-        bot.send_photo(chat_id, f'[https://headp.at/pats/](https://headp.at/pats/){urllib.parse.quote(random.choice(pats))}', reply_to_message_id=msg_id)
+        bot.send_photo(chat_id, f'https://headp.at/pats/{urllib.parse.quote(random.choice(pats))}', reply_to_message_id=msg_id)
 
 
 @run_async
@@ -246,7 +246,7 @@ def spank(bot: Bot, update: Update):
     # Call Nekos.best API to fetch a random spank GIF
     try:
         req = urllib.request.Request(
-            '[https://nekos.best/api/v2/spank](https://nekos.best/api/v2/spank)',
+            'https://nekos.best/api/v2/spank',
             headers={'User-Agent': 'Mozilla/5.0 (TheRealPhoenixBot/1.0)'}
         )
         res_data = json.loads(urllib.request.urlopen(req, timeout=8).read().decode('utf-8'))
@@ -259,15 +259,14 @@ def spank(bot: Bot, update: Update):
     if target:
         caption = f"⚡ *{sender}* spanked *{target}*!"
     else:
-        caption = f"*{sender}* is looking around for some cheeks to spank..."
+        caption = f"*{sender}* is looking around for someone to spank..."
 
-    # If replying, match the structure and target reply_to_message_id
+    # If replying, match the structure and target reply_to_message_id[cite: 3]
     msg_id = msg.reply_to_message.message_id if msg.reply_to_message else msg.message_id
     
-    # Using send_animation ensures the GIF plays cleanly inline on Telegram client
-    bot.send_animation(
+    bot.send_document(
         chat_id=chat_id,
-        animation=gif_url,
+        document=gif_url,
         caption=caption,
         parse_mode=ParseMode.MARKDOWN,
         reply_to_message_id=msg_id
@@ -317,7 +316,7 @@ def wiki(bot: Bot, update: Update):
     if res:
         result = f"<b>{search.title()}</b>\n\n"
         result += f"<i>{res}</i>\n\n"
-        result += f"""<a href="[https://en.wikipedia.org/wiki/](https://en.wikipedia.org/wiki/){urllib.parse.quote(search)}">Read more...</a>"""
+        result += f"""<a href="https://en.wikipedia.org/wiki/{urllib.parse.quote(search)}">Read more...</a>"""
         
         if len(result) > 4000:
             with open("result.txt", 'w', encoding='utf-8') as f:
