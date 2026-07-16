@@ -1,52 +1,147 @@
-# Modular Gemini AI Chatbot Module for TheRealPhoenixBot
-# Built using the modern, non-deprecated google-genai SDK
+# Modular AI Chatbot module for TheRealPhoenixBot
+# Automatically retries transient errors (503/429/overload) and fails over from
+# Gemini to Mistral so a single provider's outage doesn't take /ask down entirely.
 
 import os
+import time
 import logging
-from google import genai
-from google.genai import types
+
 from telegram import Bot, Update, ParseMode
-from telegram.ext import MessageHandler, Filters, run_async
+from telegram.ext import CommandHandler, MessageHandler, Filters, run_async
 from tg_bot import dispatcher
 from tg_bot.modules.disable import DisableAbleCommandHandler
 
 LOGGER = logging.getLogger(__name__)
 
-# Initialize client using the modern SDK structure
-API_KEY = os.environ.get("AI_API_KEY") or os.environ.get("GEMINI_API_KEY")
-if API_KEY:
-    # Under google-genai, we initialize a client instance
-    client = genai.Client(api_key=API_KEY)
-    # Using the current GA flash model identifier (gemini-1.5-* was fully shut down in 2026)
-    MODEL_NAME = 'gemini-3.5-flash'
+SYSTEM_PROMPT = (
+    "You are Phoenix, a helpful, authentic, and witty AI companion bot in a Telegram chat. "
+    "Respond concisely, keep formatting clean (use basic markdown safely), and match the conversational tone of the user."
+)
+
+# ---------------------------------------------------------------------------
+# Gemini setup
+# ---------------------------------------------------------------------------
+GEMINI_API_KEY = os.environ.get("AI_API_KEY") or os.environ.get("GEMINI_API_KEY")
+GEMINI_MODEL = "gemini-3.5-flash"  # avoid pinning to a dated model - these get retired
+gemini_client = None
+genai_types = None
+
+if GEMINI_API_KEY:
+    try:
+        from google import genai
+        from google.genai import types as genai_types
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+    except Exception as e:
+        LOGGER.error(f"[ai] Failed to initialize Gemini client: {e}")
 else:
-    LOGGER.warning("AI_API_KEY / GEMINI_API_KEY is not set. Gemini module will be disabled.")
-    client = None
+    LOGGER.warning("[ai] AI_API_KEY / GEMINI_API_KEY not set - Gemini provider disabled.")
+
+# ---------------------------------------------------------------------------
+# Mistral setup
+# ---------------------------------------------------------------------------
+MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY")
+MISTRAL_MODEL = "mistral-large-latest"  # alias always points at the current flagship
+mistral_client = None
+
+if MISTRAL_API_KEY:
+    try:
+        from mistralai import Mistral
+        mistral_client = Mistral(api_key=MISTRAL_API_KEY)
+    except Exception as e:
+        LOGGER.error(f"[ai] Failed to initialize Mistral client: {e}")
+else:
+    LOGGER.warning("[ai] MISTRAL_API_KEY not set - Mistral fallback disabled.")
+
+# Order providers are tried in. Override via env if you want Mistral tried first, e.g.
+# AI_PROVIDER_ORDER="mistral,gemini"
+PROVIDER_ORDER = [
+    p.strip().lower()
+    for p in os.environ.get("AI_PROVIDER_ORDER", "gemini,mistral").split(",")
+    if p.strip()
+]
+
+MAX_RETRIES_PER_PROVIDER = 2
+BACKOFF_BASE_SECONDS = 1.5
+
+# Substrings that indicate a *transient* error worth retrying/failing over on,
+# as opposed to a bad request, bad key, etc. which retrying won't fix.
+TRANSIENT_MARKERS = ("503", "UNAVAILABLE", "429", "rate limit", "overloaded", "high demand", "timeout")
+
+
+def _is_transient(err: Exception) -> bool:
+    text = str(err).lower()
+    return any(marker.lower() in text for marker in TRANSIENT_MARKERS)
+
+
+def _call_gemini(prompt: str) -> str:
+    config = genai_types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT)
+    response = gemini_client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=prompt,
+        config=config,
+    )
+    return response.text.strip()
+
+
+def _call_mistral(prompt: str) -> str:
+    response = mistral_client.chat.complete(
+        model=MISTRAL_MODEL,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+    )
+    return response.choices[0].message.content.strip()
+
+
+# name -> (is_available_fn, call_fn)
+PROVIDERS = {
+    "gemini": (lambda: gemini_client is not None, _call_gemini),
+    "mistral": (lambda: mistral_client is not None, _call_mistral),
+}
 
 
 def generate_ai_response(prompt: str) -> str:
-    """Helper function to call Gemini API using the modern SDK structure."""
-    if not client:
-        return "I'm sorry, but my AI core is currently offline (API key missing)."
-    
-    try:
-        # Define modern system instructions
-        config = types.GenerateContentConfig(
-            system_instruction=(
-                "You are Phoenix, a helpful, authentic, and witty AI companion bot in a Telegram chat. "
-                "Respond concisely, keep formatting clean (use basic markdown safely), and match the conversational tone of the user."
-            )
-        )
-        # Call API
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
-            config=config,
-        )
-        return response.text.strip()
-    except Exception as e:
-        LOGGER.error(f"[gemini] Gemini API execution failed: {type(e).__name__}: {e}", exc_info=True)
-        return "Sorry, I had a brief neural misfire. Could you try asking that again?"
+    """Tries each configured provider in PROVIDER_ORDER, retrying transient errors
+    with backoff before failing over to the next provider. Returns a friendly
+    message only if every provider is unavailable or fails."""
+    last_error = None
+    tried_any = False
+
+    for provider_name in PROVIDER_ORDER:
+        provider = PROVIDERS.get(provider_name)
+        if not provider:
+            LOGGER.warning(f"[ai] Unknown provider '{provider_name}' in AI_PROVIDER_ORDER, skipping.")
+            continue
+
+        is_available, call_fn = provider
+        if not is_available():
+            continue
+
+        tried_any = True
+        for attempt in range(1, MAX_RETRIES_PER_PROVIDER + 1):
+            try:
+                return call_fn(prompt)
+            except Exception as e:
+                last_error = e
+                transient = _is_transient(e)
+                LOGGER.warning(
+                    f"[ai] {provider_name} attempt {attempt}/{MAX_RETRIES_PER_PROVIDER} failed "
+                    f"({'transient, will retry/failover' if transient else 'non-transient, giving up on this provider'}): {e}"
+                )
+                if not transient:
+                    break
+                if attempt < MAX_RETRIES_PER_PROVIDER:
+                    time.sleep(BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)))
+
+        LOGGER.error(f"[ai] {provider_name} exhausted retries, moving to next provider if any.")
+
+    if not tried_any:
+        LOGGER.error("[ai] No AI providers are configured (missing API keys).")
+        return "I'm sorry, but my AI core is currently offline (no API keys configured)."
+
+    LOGGER.error(f"[ai] All configured providers failed. Last error: {last_error}")
+    return "Sorry, I had a brief neural misfire. Could you try asking that again?"
 
 
 @run_async
@@ -59,9 +154,7 @@ def ask_ai(bot: Bot, update: Update, args):
         msg.reply_text("Please provide a question! Example: `/ask why is the sky blue?`", parse_mode=ParseMode.MARKDOWN)
         return
 
-    # Send typing action so users know the bot is "thinking"
     bot.send_chat_action(chat_id=msg.chat_id, action="typing")
-    
     response = generate_ai_response(query)
     msg.reply_text(response)
 
@@ -70,49 +163,69 @@ def ask_ai(bot: Bot, update: Update, args):
 def mention_chatbot(bot: Bot, update: Update):
     """Handles auto-replying when the bot is tagged (@TheRealPhoenixBot) in groups or PM'd directly."""
     msg = update.effective_message
-    LOGGER.info(f"[gemini] mention_chatbot triggered by {msg.from_user.id} in chat {msg.chat_id}")
+    LOGGER.info(f"[ai] mention_chatbot triggered by {msg.from_user.id} in chat {msg.chat_id}")
 
-    # Extract the query text, removing the bot's tag if present
     query = msg.text
     bot_username = f"@{bot.username}"
-    
+
     if bot_username in query:
         query = query.replace(bot_username, "").strip()
-    
+
     if not query:
-        return # Avoid responding to empty tags
+        return
 
     bot.send_chat_action(chat_id=msg.chat_id, action="typing")
     response = generate_ai_response(query)
     msg.reply_text(response)
 
 
+@run_async
+def ai_status(bot: Bot, update: Update):
+    """Quick diagnostic: which providers are configured and in what order they're tried."""
+    lines = ["*AI provider status:*"]
+    for name in PROVIDER_ORDER:
+        provider = PROVIDERS.get(name)
+        if not provider:
+            lines.append(f"- `{name}`: unknown provider name")
+            continue
+        is_available, _ = provider
+        status = "configured" if is_available() else "NOT configured (missing API key)"
+        lines.append(f"- `{name}`: {status}")
+    update.effective_message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+
+
 # 1. Command handler: triggers on `/ask [question]` or `/ai [question]`
 ASK_HANDLER = DisableAbleCommandHandler(["ask", "ai"], ask_ai, pass_args=True)
 dispatcher.add_handler(ASK_HANDLER)
 
-# 2. Mention handler: triggers when the bot's username is tagged, or when direct messaged in PM
-# NOTE: registered in a dedicated group (not the default group 0). PTB v13 only runs the
-# FIRST matching handler within a given group, then stops checking that group. Other modules
-# (notes, filters, blacklists, antiflood, etc.) commonly register broad Filters.text handlers
-# in group 0, which would otherwise swallow every message before this one ever gets a turn.
-# Groups are evaluated independently, so putting this in its own group guarantees it always runs.
+# 2. Mention handler: triggers when the bot's username is tagged, or when direct messaged in PM.
+# Registered in its own group (10) so other broad text-handling modules in group 0 can't
+# swallow the update first. Commands are excluded from the private-chat branch so /start
+# etc. in DM don't get routed here instead of their real handlers.
 MENTION_HANDLER = MessageHandler(
-    Filters.text & (Filters.entity("mention") | Filters.private) & (~Filters.command), 
-    mention_chatbot
+    Filters.text & (Filters.entity("mention") | Filters.private) & (~Filters.command),
+    mention_chatbot,
 )
 dispatcher.add_handler(MENTION_HANDLER, group=10)
 
+# 3. Diagnostic command
+AI_STATUS_HANDLER = CommandHandler("aistatus", ai_status)
+dispatcher.add_handler(AI_STATUS_HANDLER)
+
 # Module details for the main system
 __help__ = """
-Let's make the bot conversational! You can interact with the built-in Gemini AI model.
+Let's make the bot conversational! You can interact with the built-in AI model.
 
 *Available commands:*
  - /ask <question>: Ask the AI any question directly.
  - /ai <question>: Same as /ask.
- 
+ - /aistatus: Shows which AI providers are configured and their fallback order.
+
 *Alternative:*
 - Simply tag the bot (`@bot_username`) in a group message, or message it in private, and it will automatically answer you using AI!
+
+*Reliability:*
+This module automatically retries and fails over between providers (currently Gemini and Mistral, in that order) if one is temporarily overloaded, so a single provider outage won't take the bot's AI features down.
 """
 
-__mod_name__ = "Chatbot"
+__mod_name__ = "AI Chatbot"
