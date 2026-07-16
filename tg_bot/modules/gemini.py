@@ -109,4 +109,4 @@ Let's make the bot conversational! You can interact with the built-in Gemini AI 
 - Simply tag the bot (`@bot_username`) in a group message, or message it in private, and it will automatically answer you using AI!
 """
 
-__mod_name__ = "Gemini"
+__mod_name__ = "Chatbot"
