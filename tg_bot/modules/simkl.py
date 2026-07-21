@@ -12,6 +12,7 @@ from tg_bot.modules.disable import DisableAbleCommandHandler
 # This will fetch the API key from your Render environment variables
 SIMKL_CLIENT_ID = os.environ.get("SIMKL_CLIENT_ID")
 
+
 def search_simkl(bot: Bot, update: Update, args: list, media_type: str):
     msg = update.effective_message
     
@@ -20,7 +21,6 @@ def search_simkl(bot: Bot, update: Update, args: list, media_type: str):
         return
         
     if not args:
-        # Provide helpful examples depending on the command used
         if media_type == "anime":
             example = "/anime Jujutsu Kaisen"
         elif media_type == "tv":
@@ -35,38 +35,66 @@ def search_simkl(bot: Bot, update: Update, args: list, media_type: str):
     bot.send_chat_action(chat_id=msg.chat_id, action="typing")
     
     try:
-        # Simkl's v1 search endpoint
-        url = f"https://api.simkl.com/search/{media_type}?q={urllib.parse.quote(query)}&client_id={SIMKL_CLIENT_ID}"
-        req = urllib.request.Request(url, headers={'User-Agent': 'TheRealPhoenixBot/1.0'})
-        
-        # Bypass SSL Verification issues just like we did in extras.py
         import ssl
         context = ssl._create_unverified_context()
         
-        with urllib.request.urlopen(req, context=context, timeout=8) as response:
+        # Step 1: Search for the title
+        search_url = f"https://api.simkl.com/search/{media_type}?q={urllib.parse.quote(query)}&client_id={SIMKL_CLIENT_ID}"
+        search_req = urllib.request.Request(search_url, headers={'User-Agent': 'TheRealPhoenixBot/1.0'})
+        
+        with urllib.request.urlopen(search_req, context=context, timeout=8) as response:
             data = json.loads(response.read().decode('utf-8'))
             
         if not data:
             msg.reply_text(f"Couldn't find any {media_type} matching '{query}'.")
             return
             
-        # Grab the top result
-        result = data[0]
-        title = result.get('title', 'Unknown Title')
-        year = result.get('year', 'Unknown Year')
-        poster_id = result.get('poster')
-        simkl_id = result.get('ids', {}).get('simkl')
+        # Get the ID of the top result
+        simkl_id = data[0].get('ids', {}).get('simkl')
         
-        # Construct the caption
-        link = f"https://simkl.com/{media_type}/{simkl_id}/" if simkl_id else "https://simkl.com/"
-        caption = f"🎬 *{title}* ({year})\n\n[View details on Simkl]({link})"
+        if not simkl_id:
+            msg.reply_text(f"Found something, but couldn't retrieve its Simkl ID.")
+            return
+
+        # Step 2: Fetch the full extended details using the ID
+        details_url = f"https://api.simkl.com/{media_type}/{simkl_id}?client_id={SIMKL_CLIENT_ID}&extended=full"
+        details_req = urllib.request.Request(details_url, headers={'User-Agent': 'TheRealPhoenixBot/1.0'})
         
-        # Send the poster if it exists, otherwise just send the text
+        with urllib.request.urlopen(details_req, context=context, timeout=8) as response:
+            details = json.loads(response.read().decode('utf-8'))
+
+        # Extract all the rich details
+        title = details.get('title', 'Unknown Title')
+        year = details.get('year', 'Unknown Year')
+        status = details.get('status', 'Unknown Status')
+        poster_id = details.get('poster')
+        overview = details.get('overview', 'No synopsis available.')
+        
+        # Truncate the overview if it's super long so it doesn't flood the chat
+        if len(overview) > 400:
+            overview = overview[:397] + "..."
+            
+        # Construct the fancy caption
+        link = f"https://simkl.com/{media_type}/{simkl_id}/"
+        caption = f"🎬 *{title}* ({year})\n"
+        caption += f"📌 *Status:* {status}\n\n"
+        caption += f"📖 *Synopsis:* {overview}\n\n"
+        caption += f"[View on Simkl]({link})"
+        
+        msg_id = msg.reply_to_message.message_id if msg.reply_to_message else msg.message_id
+
+        # Send the poster if it exists, formatting it as a JPG for Telegram
         if poster_id:
-            poster_url = f"https://simkl.in/posters/{poster_id}_m.webp"
-            msg.reply_photo(photo=poster_url, caption=caption, parse_mode=ParseMode.MARKDOWN)
+            poster_url = f"https://simkl.in/posters/{poster_id}_m.jpg"
+            bot.send_photo(
+                chat_id=msg.chat_id, 
+                photo=poster_url, 
+                caption=caption, 
+                parse_mode=ParseMode.MARKDOWN,
+                reply_to_message_id=msg_id
+            )
         else:
-            msg.reply_text(caption, parse_mode=ParseMode.MARKDOWN)
+            msg.reply_text(caption, parse_mode=ParseMode.MARKDOWN, reply_to_message_id=msg_id)
             
     except Exception as e:
         print(f"[ERROR] Simkl {media_type} search failed: {e}")
