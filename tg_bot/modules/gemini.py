@@ -166,15 +166,22 @@ def ask_ai(bot: Bot, update: Update, args):
         msg.reply_text("Please provide a question! Example: `/ask why is the sky blue?`", parse_mode=ParseMode.MARKDOWN)
         return
 
+    # Extract context if replying to a text message OR a photo with a caption (like Simkl cards)
+    prompt = query
+    if msg.reply_to_message:
+        context_text = msg.reply_to_message.caption or msg.reply_to_message.text
+        if context_text:
+            prompt = f"Previous message context:\n{context_text.strip()}\n\nUser question: {query}"
+
     bot.send_chat_action(chat_id=msg.chat_id, action="typing")
-    response = generate_ai_response(query)
+    response = generate_ai_response(prompt)
     msg.reply_text(response)
 
 
 @run_async
 def mention_chatbot(bot: Bot, update: Update):
     """Handles auto-replying when the bot is tagged (@TheRealPhoenixBot) in groups,
-    PM'd directly, or when a user replies to any of the bot's messages to continue the conversation."""
+    PM'd directly, or when a user replies directly to the bot's message to continue the chat."""
     msg = update.effective_message
     if not msg or not msg.text:
         return
@@ -209,10 +216,13 @@ def mention_chatbot(bot: Bot, update: Update):
     if not query:
         return
 
-    # If replying to the bot, include previous message context to continue the chat seamlessly
-    if is_reply_to_bot and msg.reply_to_message and msg.reply_to_message.text:
-        previous_text = msg.reply_to_message.text.strip()
-        prompt = f"Previous message: {previous_text}\n\nUser reply: {query}"
+    # Check for both .caption and .text when grabbing context from the replied message
+    if is_reply_to_bot and msg.reply_to_message:
+        previous_text = msg.reply_to_message.caption or msg.reply_to_message.text
+        if previous_text:
+            prompt = f"Previous message context:\n{previous_text.strip()}\n\nUser reply: {query}"
+        else:
+            prompt = query
     else:
         prompt = query
 
