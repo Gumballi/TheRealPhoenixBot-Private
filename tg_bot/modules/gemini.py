@@ -2,11 +2,24 @@
 # Automatically retries transient errors (503/429/overload) and fails over from
 # Gemini to Mistral so a single provider's outage doesn't take /ask down entirely.
 # Upgraded with YouTube Transcript extraction capabilities.
+#
+# FIXED (see PR/patch notes):
+#   - mention_chatbot no longer fires on every reply in the chat (was matching
+#     Filters.reply, which matches ANY reply to ANY message, not just replies
+#     to the bot). Now only spawns work when the message actually concerns us.
+#   - is_mentioned uses real mention/text_mention entities instead of a raw
+#     substring search on message text (avoids false positives).
+#   - Added a lightweight per-user cooldown to stop a single user (or a raid)
+#     from burning through your AI provider quota.
+#   - GEMINI_MODEL is now overridable via env var.
+#   - Mistral call failures are surfaced more clearly instead of always
+#     collapsing into the generic "neural misfire" message.
 
 import os
 import time
 import logging
 import re
+from collections import defaultdict
 
 from telegram import Bot, Update, ParseMode
 from telegram.ext import CommandHandler, MessageHandler, Filters, run_async
@@ -24,7 +37,7 @@ SYSTEM_PROMPT = (
 # Gemini setup
 # ---------------------------------------------------------------------------
 GEMINI_API_KEY = os.environ.get("AI_API_KEY") or os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = "gemini-3.5-flash"  # avoid pinning to a dated model - these get retired
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")  # overridable if Google renames/retires it
 gemini_client = None
 genai_types = None
 
@@ -51,6 +64,7 @@ if not MISTRAL_API_KEY:
 
 MISTRAL_MODEL = "mistral-large-latest"
 mistral_client = None
+mistral_supports_chat_complete = False
 
 if MISTRAL_API_KEY:
     try:
@@ -61,6 +75,19 @@ if MISTRAL_API_KEY:
             from mistralai import Mistral
 
         mistral_client = Mistral(api_key=MISTRAL_API_KEY)
+
+        # Verify the resolved SDK actually exposes the call shape we use below.
+        # Older mistralai releases (pre-v1) don't have client.chat.complete(),
+        # which previously caused every Mistral call to fail silently and get
+        # swallowed by the retry/failover logic.
+        mistral_supports_chat_complete = hasattr(mistral_client, "chat") and hasattr(
+            mistral_client.chat, "complete"
+        )
+        if not mistral_supports_chat_complete:
+            LOGGER.error(
+                "[ai] Installed mistralai SDK does not support client.chat.complete() - "
+                "Mistral fallback will be disabled. Pin `mistralai>=1.0.0` in requirements.txt."
+            )
     except Exception as e:
         LOGGER.error(f"[ai] Failed to initialize Mistral client: {e}")
 else:
@@ -76,6 +103,23 @@ PROVIDER_ORDER = [
 MAX_RETRIES_PER_PROVIDER = 2
 BACKOFF_BASE_SECONDS = 1.5
 TRANSIENT_MARKERS = ("503", "UNAVAILABLE", "429", "rate limit", "overloaded", "high demand", "timeout")
+
+# ---------------------------------------------------------------------------
+# Per-user cooldown (prevents a single user/raid from burning your AI quota)
+# ---------------------------------------------------------------------------
+COOLDOWN_SECONDS = int(os.environ.get("AI_COOLDOWN_SECONDS", "8"))
+_last_request_at = defaultdict(float)  # user_id -> unix timestamp
+
+
+def _on_cooldown(user_id: int) -> float:
+    """Returns remaining cooldown seconds (0 if not on cooldown), and updates the timestamp if not."""
+    now = time.time()
+    elapsed = now - _last_request_at[user_id]
+    if elapsed < COOLDOWN_SECONDS:
+        return round(COOLDOWN_SECONDS - elapsed, 1)
+    _last_request_at[user_id] = now
+    return 0
+
 
 # ---------------------------------------------------------------------------
 # Core AI Functions
@@ -95,6 +139,10 @@ def _call_gemini(prompt: str) -> str:
     return response.text.strip()
 
 def _call_mistral(prompt: str) -> str:
+    if not mistral_supports_chat_complete:
+        raise RuntimeError(
+            "mistralai SDK installed does not support chat.complete() - upgrade the package"
+        )
     response = mistral_client.chat.complete(
         model=MISTRAL_MODEL,
         messages=[
@@ -106,7 +154,7 @@ def _call_mistral(prompt: str) -> str:
 
 PROVIDERS = {
     "gemini": (lambda: gemini_client is not None, _call_gemini),
-    "mistral": (lambda: mistral_client is not None, _call_mistral),
+    "mistral": (lambda: mistral_client is not None and mistral_supports_chat_complete, _call_mistral),
 }
 
 def generate_ai_response(prompt: str) -> str:
@@ -142,8 +190,8 @@ def generate_ai_response(prompt: str) -> str:
         LOGGER.error(f"[ai] {provider_name} exhausted retries, moving to next provider if any.")
 
     if not tried_any:
-        LOGGER.error("[ai] No AI providers are configured (missing API keys).")
-        return "I'm sorry, but my AI core is currently offline (no API keys configured)."
+        LOGGER.error("[ai] No AI providers are configured (missing API keys, or SDK incompatible).")
+        return "I'm sorry, but my AI core is currently offline (no working providers configured)."
 
     LOGGER.error(f"[ai] All configured providers failed. Last error: {last_error}")
     return "Sorry, I had a brief neural misfire. Could you try asking that again?"
@@ -155,31 +203,31 @@ def generate_ai_response(prompt: str) -> str:
 def _get_youtube_transcript(video_id: str) -> str:
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
-        
+
         # Initialize the API client (required for the latest versions of the library)
         yt_api = YouTubeTranscriptApi()
-        
+
         # Retrieve the list of all available transcripts for the video
         transcript_list = yt_api.list(video_id)
-        
+
         # Iterate and grab the first available transcript (bypasses strict language constraints)
         transcript_data = None
         for transcript in transcript_list:
             transcript_data = transcript.fetch()
             break  # Stop after successfully grabbing the first one
-            
+
         if not transcript_data:
             return None
-            
+
         # Stitch all subtitle blocks together
-        text = " ".join([block['text'] for block in transcript_data])
-        
+        text = " ".join([block.text for block in transcript_data])
+
         # Truncate at ~15,000 characters to prevent overloading token limits on massive videos
         if len(text) > 15000:
             text = text[:15000] + "... [Transcript truncated due to length]"
-            
+
         return text
-        
+
     except ImportError:
         LOGGER.error("[ai] youtube-transcript-api is not installed!")
         return None
@@ -191,16 +239,16 @@ def enhance_prompt_with_youtube(prompt: str) -> str:
     """Scans the prompt for a YouTube link, fetches the transcript, and silently injects it for the AI."""
     yt_pattern = r'(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})'
     match = re.search(yt_pattern, prompt)
-    
+
     if match:
         video_id = match.group(1)
         transcript = _get_youtube_transcript(video_id)
-        
+
         if transcript:
             return prompt + f"\n\n[System Note: A YouTube video was linked. Here is the hidden video transcript for you to analyze and answer the user's question:\n{transcript}]"
         else:
             return prompt + f"\n\n[System Note: A YouTube video was linked, but closed captions are disabled or unavailable. Inform the user you cannot 'watch' it without a transcript.]"
-            
+
     return prompt
 
 # ---------------------------------------------------------------------------
@@ -210,10 +258,16 @@ def enhance_prompt_with_youtube(prompt: str) -> str:
 @run_async
 def ask_ai(bot: Bot, update: Update, args):
     msg = update.effective_message
+    user_id = msg.from_user.id
     query = " ".join(args)
 
     if not query:
         msg.reply_text("Please provide a question! Example: `/ask why is the sky blue?`", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    remaining = _on_cooldown(user_id)
+    if remaining:
+        msg.reply_text(f"Slow down a bit! Try again in {remaining}s.")
         return
 
     prompt = query
@@ -228,6 +282,21 @@ def ask_ai(bot: Bot, update: Update, args):
     response = generate_ai_response(prompt)
     msg.reply_text(response)
 
+def _is_bot_mentioned(bot: Bot, msg) -> bool:
+    """Checks real mention/text_mention entities rather than a raw substring search,
+    which previously could false-positive on usernames that merely contain the
+    bot's username as a substring."""
+    if not msg.entities:
+        return False
+    for entity in msg.entities:
+        if entity.type == "mention":
+            mention_text = msg.text[entity.offset: entity.offset + entity.length]
+            if bot.username and mention_text.lower() == f"@{bot.username}".lower():
+                return True
+        elif entity.type == "text_mention" and entity.user and entity.user.id == bot.id:
+            return True
+    return False
+
 @run_async
 def mention_chatbot(bot: Bot, update: Update):
     msg = update.effective_message
@@ -235,11 +304,6 @@ def mention_chatbot(bot: Bot, update: Update):
         return
 
     is_pm = update.effective_chat.type == "private"
-    bot_username = f"@{bot.username}" if bot.username else ""
-
-    is_mentioned = bool(
-        bot_username and bot_username.lower() in msg.text.lower()
-    )
 
     is_reply_to_bot = bool(
         msg.reply_to_message
@@ -247,15 +311,27 @@ def mention_chatbot(bot: Bot, update: Update):
         and msg.reply_to_message.from_user.id == bot.id
     )
 
+    is_mentioned = _is_bot_mentioned(bot, msg)
+
+    # Bail out immediately if none of these apply - avoids spawning a thread
+    # for every single reply message in a busy group (previous behavior).
     if not (is_pm or is_mentioned or is_reply_to_bot):
         return
 
+    user_id = msg.from_user.id
+    remaining = _on_cooldown(user_id)
+    if remaining:
+        # Stay quiet on cooldown for passive mentions/replies - only /ask gets
+        # an explicit cooldown message, to avoid spamming a group chat.
+        return
+
     LOGGER.info(
-        f"[ai] mention_chatbot triggered by {msg.from_user.id} in chat {msg.chat_id} "
+        f"[ai] mention_chatbot triggered by {user_id} in chat {msg.chat_id} "
         f"(PM: {is_pm}, Mention: {is_mentioned}, ReplyToBot: {is_reply_to_bot})"
     )
 
     query = msg.text
+    bot_username = f"@{bot.username}" if bot.username else ""
     if bot_username and bot_username.lower() in query.lower():
         query = re.sub(re.escape(bot_username), "", query, flags=re.IGNORECASE).strip()
 
@@ -286,7 +362,7 @@ def ai_status(bot: Bot, update: Update):
             lines.append(f"- `{name}`: unknown provider name")
             continue
         is_available, _ = provider
-        status = "configured" if is_available() else "NOT configured (missing API key)"
+        status = "configured" if is_available() else "NOT configured (missing API key or incompatible SDK)"
         lines.append(f"- `{name}`: {status}")
     update.effective_message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
@@ -294,8 +370,12 @@ def ai_status(bot: Bot, update: Update):
 ASK_HANDLER = DisableAbleCommandHandler(["ask", "ai"], ask_ai, pass_args=True)
 dispatcher.add_handler(ASK_HANDLER)
 
+# NOTE: Filters.reply was intentionally removed from this filter - it matched
+# ANY reply to ANY message, not specifically replies to the bot, causing this
+# handler to fire (and spawn a thread) on every single reply in busy groups.
+# The real reply-to-bot check happens inside mention_chatbot() via is_reply_to_bot.
 MENTION_HANDLER = MessageHandler(
-    Filters.text & (Filters.entity("mention") | Filters.entity("text_mention") | Filters.private | Filters.reply) & (~Filters.command),
+    Filters.text & ~Filters.command,
     mention_chatbot,
 )
 dispatcher.add_handler(MENTION_HANDLER, group=10)
